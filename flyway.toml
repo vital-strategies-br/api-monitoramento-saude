@@ -1,0 +1,3 @@
+[flyway]
+baselineOnMigrate = true
+locations = ["filesystem:./db/migration"]
