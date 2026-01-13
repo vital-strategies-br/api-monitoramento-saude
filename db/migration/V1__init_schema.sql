@@ -43,7 +43,7 @@ CREATE INDEX idx_individuo_evento_lookup
 -- =========================
 -- Métricas diárias por endpoint
 -- =========================
-CREATE TABLE monitoramento.endpoint_metricas_diarias (
+CREATE TABLE monitoramento.metricas_diarias_endpoint (
     endpoint TEXT NOT NULL,
     tipo_evento TEXT NOT NULL,
     data DATE NOT NULL,

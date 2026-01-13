@@ -1,0 +1,3 @@
+- Algum mecanismo de autenticação (API key/Bearer) antes de expor isso a plugin externo. Mais especificamente, vamos ter um único plugin de navegador que irá interagir com ela. Acho que não tem como deixar isso 100% seguro.
+- Dockerfile + docker-compose.yml
+- Melhorar documentação
