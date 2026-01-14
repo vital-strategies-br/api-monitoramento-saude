@@ -1,13 +1,17 @@
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
 
 
-class IndividuoEvento(Base):
-    __tablename__ = "individuo_evento"
+class IndividuoIdentificador(Base):
+    __tablename__ = "individuo_identificador"
     __table_args__ = (
-        Index("idx_individuo_evento_lookup", "individuo_id", "tipo_evento"),
+        Index(
+            "idx_individuo_identificador_lookup",
+            "tipo_identificador",
+            "valor_identificador",
+        ),
         {"schema": "monitoramento"},
     )
 
@@ -17,10 +21,8 @@ class IndividuoEvento(Base):
         ForeignKey("monitoramento.individuo.id", ondelete="CASCADE"),
         nullable=False,
     )
-    tipo_evento: Mapped[str] = mapped_column(Text, nullable=False)
-    data_identificacao: Mapped[object] = mapped_column(
-        Date, nullable=False
-    )
+    tipo_identificador: Mapped[str] = mapped_column(Text, nullable=False)
+    valor_identificador: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

@@ -32,7 +32,7 @@ CREATE TABLE monitoramento.individuo_evento (
         REFERENCES monitoramento.individuo(id)
         ON DELETE CASCADE,
     tipo_evento TEXT NOT NULL,
-    data_identificacao TIMESTAMPTZ NOT NULL,
+    data_identificacao DATE NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
