@@ -1,0 +1,3 @@
+ALTER TABLE monitoramento.individuo_identificador
+ADD CONSTRAINT uq_individuo_identificador
+UNIQUE (tipo_identificador, valor_identificador);
