@@ -5,8 +5,7 @@ from app.api.v1.router import api_router
 from app.core.auth import ApiAuthMiddleware
 from app.core.config import settings
 from app.core.errors import internal_exception_handler
-from app.core.logging import configure_logging
-from app.core.middleware import RequestLoggingMiddleware
+from app.core.logging import configure_logging, RequestLoggingMiddleware
 from app.db.session import db_ping
 
 configure_logging()
@@ -24,7 +23,10 @@ app = FastAPI(
             "name": "relacao",
             "description": "Endpoints para verificar se existe relação entre identificadores e um tipo de evento.",
         },
-        {"name": "health", "description": "Verificações de disponibilidade da API e do banco de dados."},
+        {
+            "name": "health",
+            "description": "Verificações de disponibilidade da API e do banco de dados.",
+        },
     ],
 )
 
@@ -38,9 +40,8 @@ app.add_middleware(
 )
 
 app.add_middleware(ApiAuthMiddleware)
-
-app.include_router(api_router, prefix="/api/v1")
 app.add_middleware(RequestLoggingMiddleware)
+app.include_router(api_router, prefix="/api/v1")
 app.add_exception_handler(Exception, internal_exception_handler)
 
 
