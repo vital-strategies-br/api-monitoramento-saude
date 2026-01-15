@@ -1,3 +1,0 @@
-- Preciso de alguma forma de poder fazer seeding. Até porque na primeira vez em que a API subir, preciso colocar os primeiros registros
-- Dockerfile + docker-compose.yml
-- Melhorar documentação
