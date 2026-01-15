@@ -1,6 +1,6 @@
 from typing import List
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Path
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,9 +19,7 @@ class Identificador(BaseModel):
     )
     valor: str = Field(
         ...,
-        description=(
-            "Valor do identificador. Para `cpf` e `cns`, o valor é normalizado removendo caracteres não numéricos."
-        ),
+        description="Valor do identificador. Para `cpf` e `cns`, o valor é normalizado removendo caracteres não numéricos.",
         examples=["123.456.789-01"],
     )
 
@@ -35,11 +33,6 @@ class Identificador(BaseModel):
 
 
 class RelacaoRequest(BaseModel):
-    tipo_evento: str = Field(
-        ...,
-        description="Tipo do evento que será consultado.",
-        examples=["violencia"],
-    )
     identificadores: List[Identificador] = Field(
         ...,
         description="Lista de identificadores a serem consultados. Mínimo: 1. Máximo: 10.",
@@ -63,7 +56,7 @@ class RelacaoResponse(BaseModel):
 
 
 @router.post(
-    "/relacao",
+    "/relacao/{tipo_evento}",
     response_model=RelacaoResponse,
     summary="Verificar relação",
     description=(
@@ -77,14 +70,19 @@ class RelacaoResponse(BaseModel):
     },
 )
 async def relacao(
-    payload: RelacaoRequest, request: Request, db: AsyncSession = Depends(get_db)
+    tipo_evento: str = Path(
+        ..., description="Tipo do evento que será consultado.", examples=["violencia"]
+    ),
+    payload: RelacaoRequest = ...,
+    request: Request = ...,
+    db: AsyncSession = Depends(get_db),
 ) -> RelacaoResponse:
     pares = [(i.tipo, i.valor) for i in payload.identificadores]
 
     relacionado = await service.consultar(
         db,
         endpoint=str(request.url.path),
-        tipo_evento=payload.tipo_evento,
+        tipo_evento=tipo_evento,
         pares_identificadores=pares,
     )
 
