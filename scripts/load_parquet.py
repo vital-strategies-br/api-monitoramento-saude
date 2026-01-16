@@ -151,6 +151,12 @@ def load_parquet_file(
                     if id_pessoa is None:
                         continue
 
+                    if tipo_identificador in {"cpf", "cns"}:
+                        # Remover caracteres não numéricos
+                        valor_identificador = "".join(
+                            ch for ch in str(valor_identificador) if ch.isdigit()
+                        )
+
                     copy.write_row(
                         (
                             int(id_pessoa),
