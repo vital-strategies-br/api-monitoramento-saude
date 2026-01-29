@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Literal
 
 from fastapi import APIRouter, Depends, Request, Path
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -9,6 +9,12 @@ from app.services.relacao_service import RelacaoService
 
 router = APIRouter(tags=["relacao"])
 service = RelacaoService()
+
+TipoEvento = Literal["violencia"]
+TipoMetodoIdentificacao = Literal[
+    "modelo_semantica_explicita",
+    "modelo_classificacao_provavel",
+]
 
 
 class Identificador(BaseModel):
@@ -52,6 +58,11 @@ class RelacaoResponse(BaseModel):
         ...,
         description="Indica se existe ao menos um indivíduo com algum dos identificadores informado e com evento do tipo consultado.",
         examples=[True, False],
+    ),
+    metodo_identificacao: TipoMetodoIdentificacao | None = Field(
+        ...,
+        description="Método que foi usado para verificar a relação.",
+        examples=["modelo_semantica_explicita", "modelo_classificacao_provavel"],
     )
 
 
@@ -62,6 +73,7 @@ class RelacaoResponse(BaseModel):
     description=(
         "Verifica se existe relação entre **qualquer** dos identificadores informados e o `tipo_evento`. "
         "A resposta é `relacionado=true` quando há pelo menos um registro de evento para o mesmo indivíduo associado."
+        "O campo `metodo_identificacao` indica o método utilizado para estabelecer a relação."
     ),
     responses={
         401: {"description": "Não autorizado (API Key/HMAC ausentes ou inválidos)."},
@@ -70,8 +82,10 @@ class RelacaoResponse(BaseModel):
     },
 )
 async def relacao(
-    tipo_evento: str = Path(
-        ..., description="Tipo do evento que será consultado.", examples=["violencia"]
+    tipo_evento: TipoEvento = Path(
+        ...,
+        description="Tipo do evento que será consultado.",
+        examples=["violencia"],
     ),
     payload: RelacaoRequest = ...,
     request: Request = ...,
@@ -79,11 +93,12 @@ async def relacao(
 ) -> RelacaoResponse:
     pares = [(i.tipo, i.valor) for i in payload.identificadores]
 
-    relacionado = await service.consultar(
+    metodo_identificacao = await service.consultar(
         db,
         endpoint=str(request.url.path),
         tipo_evento=tipo_evento,
         pares_identificadores=pares,
     )
 
-    return RelacaoResponse(relacionado=relacionado)
+    relacionado = metodo_identificacao is not None
+    return RelacaoResponse(relacionado=relacionado, metodo_identificacao=metodo_identificacao)

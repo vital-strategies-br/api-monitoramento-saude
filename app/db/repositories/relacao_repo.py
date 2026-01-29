@@ -1,4 +1,4 @@
-from sqlalchemy import select, tuple_
+from sqlalchemy import case, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.individuo_evento import IndividuoEvento
@@ -12,25 +12,35 @@ class RelacaoRepository:
         *,
         tipo_evento: str,
         pares_identificadores: list[tuple[str, str]],
-    ) -> bool:
+    ) -> str | None:
         if not pares_identificadores:
-            return False
+            return None
+
+        prioridade = case(
+            (IndividuoEvento.metodo_identificacao == "modelo_semantica_explicita", 0),
+            else_=1,
+        )
 
         q = (
-            select(1)
+            select(IndividuoEvento.metodo_identificacao)
             .select_from(IndividuoIdentificador)
             .join(
                 IndividuoEvento,
                 IndividuoEvento.individuo_id == IndividuoIdentificador.individuo_id,
             )
             .where(IndividuoEvento.tipo_evento == tipo_evento)
+            .where(IndividuoEvento.metodo_identificacao != "n_a")
             .where(
                 tuple_(
                     IndividuoIdentificador.tipo_identificador,
                     IndividuoIdentificador.valor_identificador,
                 ).in_(pares_identificadores)
             )
+            .order_by(prioridade)
             .limit(1)
         )
+
         res = await db.execute(q)
-        return res.first() is not None
+        row = res.first()
+
+        return row[0] if row else None

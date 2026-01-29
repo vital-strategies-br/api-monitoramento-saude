@@ -1,7 +1,25 @@
-from sqlalchemy import BigInteger, Date, DateTime, ForeignKey, Index, Text, func
+from sqlalchemy import (
+    BigInteger,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Text,
+    func,
+    Enum,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+
+
+MetodoIdentificacaoEnum = Enum(
+    "n_a",
+    "modelo_semantica_explicita",
+    "modelo_classificacao_provavel",
+    name="metodo_identificacao_enum",
+    schema="monitoramento",
+)
 
 
 class IndividuoEvento(Base):
@@ -12,15 +30,25 @@ class IndividuoEvento(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+
     individuo_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("monitoramento.individuo.id", ondelete="CASCADE"),
         nullable=False,
     )
+
     tipo_evento: Mapped[str] = mapped_column(Text, nullable=False)
-    data_identificacao: Mapped[object] = mapped_column(
-        Date, nullable=False
+
+    data_identificacao: Mapped[object] = mapped_column(Date, nullable=False)
+
+    metodo_identificacao: Mapped[str] = mapped_column(
+        MetodoIdentificacaoEnum,
+        nullable=False,
+        server_default="n_a",
     )
+
     created_at: Mapped[object] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
     )

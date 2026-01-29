@@ -40,6 +40,7 @@ except Exception as e:  # pragma: no cover
 REQUIRED_COLUMNS = {
     "id_pessoa",
     "tipo_evento",
+    "metodo_identificacao",
     "data_identificacao",
     "tipo_identificador",
     "valor_identificador",
@@ -48,6 +49,7 @@ REQUIRED_COLUMNS = {
 COPY_COLUMNS = [
     "id_pessoa",
     "tipo_evento",
+    "metodo_identificacao",
     "data_identificacao",
     "tipo_identificador",
     "valor_identificador",
@@ -133,6 +135,7 @@ def load_parquet_file(
             CREATE TEMP TABLE {TEMP_TABLE} (
                 id_pessoa BIGINT NOT NULL,
                 tipo_evento TEXT NOT NULL,
+                metodo_identificacao monitoramento.metodo_identificacao_enum NOT NULL,
                 data_identificacao DATE NOT NULL,
                 tipo_identificador TEXT NOT NULL,
                 valor_identificador TEXT NOT NULL
@@ -141,11 +144,11 @@ def load_parquet_file(
         )
 
         with cur.copy(
-            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, data_identificacao, tipo_identificador, valor_identificador) FROM STDIN"
+            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador) FROM STDIN"
         ) as copy:
             for batch in pf.iter_batches(batch_size=batch_size, columns=COPY_COLUMNS):
                 cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
-                for id_pessoa, tipo_evento, data_identificacao, tipo_identificador, valor_identificador in zip(
+                for id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador in zip(
                     *cols
                 ):
                     if id_pessoa is None:
@@ -161,6 +164,7 @@ def load_parquet_file(
                         (
                             int(id_pessoa),
                             str(tipo_evento),
+                            str(metodo_identificacao),
                             _normalize_dt(data_identificacao),
                             str(tipo_identificador),
                             str(valor_identificador),
@@ -223,8 +227,8 @@ def load_parquet_file(
         cur.execute(
             f"""
             INSERT INTO monitoramento.individuo_evento
-                (individuo_id, tipo_evento, data_identificacao)
-            SELECT id_pessoa, tipo_evento, data_identificacao
+                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao)
+            SELECT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao
             FROM {TEMP_TABLE};
             """
         )

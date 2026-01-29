@@ -22,8 +22,8 @@ class RelacaoService:
         endpoint: str,
         tipo_evento: str,
         pares_identificadores: list[tuple[str, str]],
-    ) -> bool:
-        eh_positivo = await self._relacao_repo.existe_relacao(
+    ) -> str | None:
+        metodo = await self._relacao_repo.existe_relacao(
             db,
             tipo_evento=tipo_evento,
             pares_identificadores=pares_identificadores,
@@ -36,7 +36,7 @@ class RelacaoService:
                 endpoint=endpoint,
                 tipo_evento=tipo_evento,
                 dia=date.today(),
-                positivo=eh_positivo,
+                positivo=(metodo is not None),
             )
             await db.commit()
         except Exception:
@@ -51,4 +51,4 @@ class RelacaoService:
             )
             await db.rollback()
 
-        return eh_positivo
+        return metodo
