@@ -6,41 +6,49 @@ from app.models.individuo_identificador import IndividuoIdentificador
 
 
 class RelacaoRepository:
-    async def existe_relacao(
+    async def buscar_individuos(
         self,
         db: AsyncSession,
         *,
-        tipo_evento: str,
         pares_identificadores: list[tuple[str, str]],
-    ) -> str | None:
+    ) -> list[int]:
         if not pares_identificadores:
-            return None
-
-        prioridade = case(
-            (IndividuoEvento.metodo_identificacao == "modelo_semantica_explicita", 0),
-            else_=1,
-        )
+            return []
 
         q = (
-            select(IndividuoEvento.metodo_identificacao)
-            .select_from(IndividuoIdentificador)
-            .join(
-                IndividuoEvento,
-                IndividuoEvento.individuo_id == IndividuoIdentificador.individuo_id,
-            )
-            .where(IndividuoEvento.tipo_evento == tipo_evento)
-            .where(IndividuoEvento.metodo_identificacao != "n_a")
+            select(IndividuoIdentificador.individuo_id)
             .where(
                 tuple_(
                     IndividuoIdentificador.tipo_identificador,
                     IndividuoIdentificador.valor_identificador,
                 ).in_(pares_identificadores)
             )
-            .order_by(prioridade)
+            .distinct()
+        )
+
+        res = await db.execute(q)
+        return list(res.scalars().all())
+
+    async def buscar_evento_identificacao(
+        self,
+        db: AsyncSession,
+        *,
+        individuo_id: int,
+        tipo_evento: str,
+    ) -> IndividuoEvento | None:
+        prioridade = case(
+            (IndividuoEvento.metodo_identificacao == "modelo_semantica_explicita", 0),
+            else_=1,
+        )
+
+        q = (
+            select(IndividuoEvento)
+            .where(IndividuoEvento.individuo_id == individuo_id)
+            .where(IndividuoEvento.tipo_evento == tipo_evento)
+            .where(IndividuoEvento.metodo_identificacao != "n_a")
+            .order_by(prioridade.asc(), IndividuoEvento.data_identificacao.desc())
             .limit(1)
         )
 
         res = await db.execute(q)
-        row = res.first()
-
-        return row[0] if row else None
+        return res.scalar_one_or_none()

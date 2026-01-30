@@ -7,6 +7,7 @@ from sqlalchemy import (
     Text,
     func,
     Enum,
+    CheckConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,15 +22,46 @@ MetodoIdentificacaoEnum = Enum(
     schema="monitoramento",
 )
 
+BancoOrigemIdentificacaoEnum = Enum(
+    "e-SUS APS",
+    name="banco_origem_identificacao_enum",
+    schema="monitoramento",
+)
+
 
 class IndividuoEvento(Base):
     __tablename__ = "individuo_evento"
     __table_args__ = (
         Index("idx_individuo_evento_lookup", "individuo_id", "tipo_evento"),
+        CheckConstraint(
+            """
+            (id_registro_identificacao IS NULL AND banco_origem_identificacao IS NULL)
+            OR
+            (id_registro_identificacao IS NOT NULL AND banco_origem_identificacao IS NOT NULL)
+            """,
+            name="individuo_evento_identificacao_origem_chk",
+        ),
+        Index(
+            "ux_individuo_evento_origem_metodo",
+            "individuo_id",
+            "tipo_evento",
+            "metodo_identificacao",
+            "banco_origem_identificacao",
+            "id_registro_identificacao",
+            unique=True,
+            postgresql_where=(
+                "id_registro_identificacao IS NOT NULL "
+                "AND banco_origem_identificacao IS NOT NULL"
+            ),
+        ),
         {"schema": "monitoramento"},
     )
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(
+        BigInteger,
+        primary_key=True,
+        autoincrement=True,
+    )
 
     individuo_id: Mapped[int] = mapped_column(
         BigInteger,
@@ -45,6 +77,16 @@ class IndividuoEvento(Base):
         MetodoIdentificacaoEnum,
         nullable=False,
         server_default="n_a",
+    )
+
+    banco_origem_identificacao: Mapped[str | None] = mapped_column(
+        BancoOrigemIdentificacaoEnum,
+        nullable=True,
+    )
+
+    id_registro_identificacao: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
     )
 
     created_at: Mapped[object] = mapped_column(

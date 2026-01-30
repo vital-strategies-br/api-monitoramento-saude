@@ -37,29 +37,22 @@ except Exception as e:  # pragma: no cover
     _PYARROW_IMPORT_ERROR = e
 
 
-REQUIRED_COLUMNS = {
+COLUMNS = [
     "id_pessoa",
     "tipo_evento",
     "metodo_identificacao",
     "data_identificacao",
     "tipo_identificador",
     "valor_identificador",
-}
-
-COPY_COLUMNS = [
-    "id_pessoa",
-    "tipo_evento",
-    "metodo_identificacao",
-    "data_identificacao",
-    "tipo_identificador",
-    "valor_identificador",
+    "banco_origem_identificacao",
+    "id_registro_identificacao",
 ]
 
 TEMP_TABLE = "staging_parquet_eventos"
 
 
 def _dsn_for_psycopg(database_url: str) -> str:
-    url = database_url.strip().strip("\"").strip("'")
+    url = database_url.strip().strip('"').strip("'")
 
     if url.startswith("postgresql+psycopg://"):
         return "postgresql://" + url.removeprefix("postgresql+psycopg://")
@@ -101,10 +94,12 @@ def _normalize_dt(value) -> date:
 
 
 def _validate_columns(file_path: Path, available: Iterable[str]) -> None:
-    missing = REQUIRED_COLUMNS.difference(set(available))
+    missing = set(COLUMNS).difference(set(available))
     if missing:
         cols = ", ".join(sorted(missing))
-        raise ValueError(f"Parquet '{file_path}' não possui as colunas obrigatórias: {cols}")
+        raise ValueError(
+            f"Parquet '{file_path}' não possui as colunas obrigatórias: {cols}"
+        )
 
 
 def load_parquet_file(
@@ -138,19 +133,29 @@ def load_parquet_file(
                 metodo_identificacao monitoramento.metodo_identificacao_enum NOT NULL,
                 data_identificacao DATE NOT NULL,
                 tipo_identificador TEXT NOT NULL,
-                valor_identificador TEXT NOT NULL
+                valor_identificador TEXT NOT NULL,
+                banco_origem_identificacao monitoramento.banco_origem_identificacao_enum,
+                id_registro_identificacao TEXT
             ) ON COMMIT DROP;
             """
         )
 
         with cur.copy(
-            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador) FROM STDIN"
+            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador, banco_origem_identificacao, id_registro_identificacao) FROM STDIN"
         ) as copy:
-            for batch in pf.iter_batches(batch_size=batch_size, columns=COPY_COLUMNS):
+            for batch in pf.iter_batches(batch_size=batch_size, columns=COLUMNS):
                 cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
-                for id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador in zip(
-                    *cols
-                ):
+                print(cols)
+                for (
+                    id_pessoa,
+                    tipo_evento,
+                    metodo_identificacao,
+                    data_identificacao,
+                    tipo_identificador,
+                    valor_identificador,
+                    banco_origem_identificacao,
+                    id_registro_identificacao,
+                ) in zip(*cols):
                     if id_pessoa is None:
                         continue
 
@@ -160,6 +165,8 @@ def load_parquet_file(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
 
+                    print(id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador, banco_origem_identificacao, id_registro_identificacao)
+
                     copy.write_row(
                         (
                             int(id_pessoa),
@@ -168,6 +175,12 @@ def load_parquet_file(
                             _normalize_dt(data_identificacao),
                             str(tipo_identificador),
                             str(valor_identificador),
+                            str(banco_origem_identificacao)
+                            if banco_origem_identificacao is not None
+                            else None,
+                            str(id_registro_identificacao)
+                            if id_registro_identificacao is not None
+                            else None,
                         )
                     )
                     rows_copiadas += 1
@@ -227,9 +240,10 @@ def load_parquet_file(
         cur.execute(
             f"""
             INSERT INTO monitoramento.individuo_evento
-                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao)
-            SELECT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao
-            FROM {TEMP_TABLE};
+                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao)
+            SELECT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao
+            FROM {TEMP_TABLE}
+            ON CONFLICT DO NOTHING;
             """
         )
         eventos_inseridos = max(cur.rowcount, 0)
@@ -282,7 +296,9 @@ def main() -> None:
     args = parser.parse_args()
 
     if not args.database_url:
-        raise SystemExit("DATABASE_URL não informado (use --database-url ou env DATABASE_URL).")
+        raise SystemExit(
+            "DATABASE_URL não informado (use --database-url ou env DATABASE_URL)."
+        )
 
     parquet_files: list[Path] = []
     for p in args.parquet:
@@ -295,7 +311,12 @@ def main() -> None:
     dsn = _dsn_for_psycopg(args.database_url)
 
     with psycopg.connect(dsn) as conn:
-        total = {"rows_copiadas": 0, "individuos_inseridos": 0, "identificadores_inseridos": 0, "eventos_inseridos": 0}
+        total = {
+            "rows_copiadas": 0,
+            "individuos_inseridos": 0,
+            "identificadores_inseridos": 0,
+            "eventos_inseridos": 0,
+        }
 
         for fp in parquet_files:
             res = load_parquet_file(
