@@ -102,20 +102,37 @@ def _validate_columns(file_path: Path, available: Iterable[str]) -> None:
         raise ValueError(
             f"Parquet '{file_path}' não possui as colunas obrigatórias: {cols}"
         )
-    
+
+
 def _none_if_blank(v):
     if v is None:
         return None
     s = str(v).strip()
-    return s if s != "" else None
+    if s == "":
+        return None
+    if s.lower() in {"nan", "none", "null"}:  # common “string-null” junk
+        return None
+    return s
 
 
 def _normalize_banco_origem(v):
     s = _none_if_blank(v)
     if s is None:
         return None
+    # normalize common whitespace issues
+    s = " ".join(s.split())
     return s if s in BANCO_ORIGEM_IDENTIFICACAO_ENUM else None
 
+
+def _normalize_origem_pair(banco, id_registro):
+    banco_n = _normalize_banco_origem(banco)
+    id_n = _none_if_blank(id_registro)
+
+    # If only one side is present, null out BOTH to satisfy the check constraint
+    if (banco_n is None) != (id_n is None):
+        return (None, None)
+
+    return (banco_n, id_n)
 
 
 def load_parquet_file(
@@ -179,6 +196,9 @@ def load_parquet_file(
                         valor_identificador = "".join(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
+                        banco_n, idreg_n = _normalize_origem_pair(
+                            banco_origem_identificacao, id_registro_identificacao
+                        )
 
                         copy.write_row(
                             (
@@ -188,8 +208,8 @@ def load_parquet_file(
                                 _normalize_dt(data_identificacao),
                                 str(tipo_identificador),
                                 str(valor_identificador),
-                                _normalize_banco_origem(banco_origem_identificacao),
-                                _none_if_blank(id_registro_identificacao),
+                                banco_n,
+                                idreg_n,
                             )
                         )
                     rows_copiadas += 1
@@ -250,7 +270,7 @@ def load_parquet_file(
             f"""
             INSERT INTO monitoramento.individuo_evento
                 (individuo_id, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao)
-            SELECT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao
+            SELECT DISTINCT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao
             FROM {TEMP_TABLE}
             ON CONFLICT DO NOTHING;
             """
