@@ -25,6 +25,7 @@ MetodoIdentificacaoEnum = Enum(
 
 BancoOrigemIdentificacaoEnum = Enum(
     "e-SUS APS",
+    "Sinan - Violências",
     name="banco_origem_identificacao_enum",
     schema="monitoramento",
 )
