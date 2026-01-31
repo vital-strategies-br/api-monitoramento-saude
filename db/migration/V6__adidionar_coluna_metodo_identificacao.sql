@@ -1,0 +1,1 @@
+ALTER TABLE monitoramento.metricas_diarias_endpoint ADD COLUMN metodo_identificacao TEXT;

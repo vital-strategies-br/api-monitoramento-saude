@@ -18,6 +18,7 @@ MetodoIdentificacaoEnum = Enum(
     "n_a",
     "modelo_semantica_explicita",
     "modelo_classificacao_provavel",
+    "notificacao_sinan",
     name="metodo_identificacao_enum",
     schema="monitoramento",
 )

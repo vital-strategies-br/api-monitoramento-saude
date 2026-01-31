@@ -23,3 +23,6 @@ class MetricasDiariasEndpoint(Base):
     updated_at: Mapped[object] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    metodo_identificacao: Mapped[str | None] = mapped_column(
+        Text, nullable=True
+    )

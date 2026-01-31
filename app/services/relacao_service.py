@@ -62,6 +62,7 @@ class RelacaoService:
             db,
             endpoint=endpoint,
             tipo_evento=tipo_evento,
+            metodo_identificacao=evento.metodo_identificacao if evento else None,
             positivo=(evento is not None),
         )
 
@@ -73,6 +74,7 @@ class RelacaoService:
         *,
         endpoint: str,
         tipo_evento: str,
+        metodo_identificacao: str | None,
         positivo: bool,
     ) -> None:
         try:
@@ -80,6 +82,7 @@ class RelacaoService:
                 db,
                 endpoint=endpoint,
                 tipo_evento=tipo_evento,
+                metodo_identificacao=metodo_identificacao,
                 dia=date.today(),
                 positivo=positivo,
             )

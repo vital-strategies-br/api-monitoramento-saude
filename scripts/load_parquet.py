@@ -48,6 +48,8 @@ COLUMNS = [
     "id_registro_identificacao",
 ]
 
+BANCO_ORIGEM_IDENTIFICACAO_ENUM = set(["e-SUS APS", "Sinan - Violências"])
+
 TEMP_TABLE = "staging_parquet_eventos"
 
 
@@ -145,7 +147,6 @@ def load_parquet_file(
         ) as copy:
             for batch in pf.iter_batches(batch_size=batch_size, columns=COLUMNS):
                 cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
-                print(cols)
                 for (
                     id_pessoa,
                     tipo_evento,
@@ -165,8 +166,6 @@ def load_parquet_file(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
 
-                    print(id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador, banco_origem_identificacao, id_registro_identificacao)
-
                     copy.write_row(
                         (
                             int(id_pessoa),
@@ -176,7 +175,8 @@ def load_parquet_file(
                             str(tipo_identificador),
                             str(valor_identificador),
                             str(banco_origem_identificacao)
-                            if banco_origem_identificacao is not None
+                            if banco_origem_identificacao
+                            in BANCO_ORIGEM_IDENTIFICACAO_ENUM
                             else None,
                             str(id_registro_identificacao)
                             if id_registro_identificacao is not None

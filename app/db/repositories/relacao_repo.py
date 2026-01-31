@@ -37,8 +37,9 @@ class RelacaoRepository:
         tipo_evento: str,
     ) -> IndividuoEvento | None:
         prioridade = case(
-            (IndividuoEvento.metodo_identificacao == "modelo_semantica_explicita", 0),
-            else_=1,
+            (IndividuoEvento.metodo_identificacao == "notificacao_sinan", 0),
+            (IndividuoEvento.metodo_identificacao == "modelo_semantica_explicita", 1),
+            else_=2,
         )
 
         q = (

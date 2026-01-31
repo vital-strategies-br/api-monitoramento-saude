@@ -12,7 +12,7 @@ configure_logging()
 
 app = FastAPI(
     title="API Monitoramento Saúde - Vital Strategies Brasil",
-    version="0.1.0",
+    version="1.0.0",
     description=(
         "API para consulta de relações entre identificadores e eventos de saúde. "
         "Esta API **não** armazena dados pessoais: trabalha com identificadores e eventos "

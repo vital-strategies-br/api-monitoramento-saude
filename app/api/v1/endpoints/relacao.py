@@ -63,7 +63,7 @@ class RelacaoResponse(BaseModel):
     metodo_identificacao: TipoMetodoIdentificacao | None = Field(
         None,
         description="Método que foi usado para verificar a relação.",
-        examples=["modelo_semantica_explicita", "modelo_classificacao_provavel"],
+        examples=["modelo_semantica_explicita", "modelo_classificacao_provavel", "notificacao_sinan"],
     )
     data_identificacao: str | None = Field(
         None,
