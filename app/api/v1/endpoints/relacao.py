@@ -13,6 +13,7 @@ service = RelacaoService()
 
 TipoEvento = Literal["violencia"]
 TipoMetodoIdentificacao = Literal[
+    "notificacao_sinan",
     "modelo_semantica_explicita",
     "modelo_classificacao_provavel",
 ]
