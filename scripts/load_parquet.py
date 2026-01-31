@@ -102,6 +102,20 @@ def _validate_columns(file_path: Path, available: Iterable[str]) -> None:
         raise ValueError(
             f"Parquet '{file_path}' não possui as colunas obrigatórias: {cols}"
         )
+    
+def _none_if_blank(v):
+    if v is None:
+        return None
+    s = str(v).strip()
+    return s if s != "" else None
+
+
+def _normalize_banco_origem(v):
+    s = _none_if_blank(v)
+    if s is None:
+        return None
+    return s if s in BANCO_ORIGEM_IDENTIFICACAO_ENUM else None
+
 
 
 def load_parquet_file(
@@ -166,23 +180,18 @@ def load_parquet_file(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
 
-                    copy.write_row(
-                        (
-                            int(id_pessoa),
-                            str(tipo_evento),
-                            str(metodo_identificacao),
-                            _normalize_dt(data_identificacao),
-                            str(tipo_identificador),
-                            str(valor_identificador),
-                            str(banco_origem_identificacao)
-                            if banco_origem_identificacao
-                            in BANCO_ORIGEM_IDENTIFICACAO_ENUM
-                            else None,
-                            str(id_registro_identificacao)
-                            if id_registro_identificacao is not None
-                            else None,
+                        copy.write_row(
+                            (
+                                int(id_pessoa),
+                                str(tipo_evento),
+                                str(metodo_identificacao),
+                                _normalize_dt(data_identificacao),
+                                str(tipo_identificador),
+                                str(valor_identificador),
+                                _normalize_banco_origem(banco_origem_identificacao),
+                                _none_if_blank(id_registro_identificacao),
+                            )
                         )
-                    )
                     rows_copiadas += 1
 
         cur.execute(
