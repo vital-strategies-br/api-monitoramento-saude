@@ -53,6 +53,10 @@ def _compute_hmac_hex(secret: str, signing_string: str) -> str:
 
 class ApiAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
+        # 0) Ignorar pre-flight
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         # 1) Exceções
         if _is_exempt_path(request.url.path):
             return await call_next(request)
