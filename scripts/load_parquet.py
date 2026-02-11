@@ -46,6 +46,7 @@ COLUMNS = [
     "valor_identificador",
     "banco_origem_identificacao",
     "id_registro_identificacao",
+    "gera_alerta",
 ]
 
 BANCO_ORIGEM_IDENTIFICACAO_ENUM = set(["e-SUS APS", "Sinan - Violências"])
@@ -168,13 +169,14 @@ def load_parquet_file(
                 tipo_identificador TEXT NOT NULL,
                 valor_identificador TEXT NOT NULL,
                 banco_origem_identificacao monitoramento.banco_origem_identificacao_enum,
-                id_registro_identificacao TEXT
+                id_registro_identificacao TEXT,
+                gera_alerta BOOLEAN DEFAULT FALSE
             ) ON COMMIT DROP;
             """
         )
 
         with cur.copy(
-            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador, banco_origem_identificacao, id_registro_identificacao) FROM STDIN"
+            f"COPY {TEMP_TABLE} (id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, tipo_identificador, valor_identificador, banco_origem_identificacao, id_registro_identificacao, gera_alerta) FROM STDIN"
         ) as copy:
             for batch in pf.iter_batches(batch_size=batch_size, columns=COLUMNS):
                 cols = [batch.column(i).to_pylist() for i in range(batch.num_columns)]
@@ -187,6 +189,7 @@ def load_parquet_file(
                     valor_identificador,
                     banco_origem_identificacao,
                     id_registro_identificacao,
+                    gera_alerta,
                 ) in zip(*cols):
                     if id_pessoa is None:
                         continue
@@ -210,6 +213,7 @@ def load_parquet_file(
                                 str(valor_identificador),
                                 banco_n,
                                 idreg_n,
+                                gera_alerta,
                             )
                         )
                     rows_copiadas += 1
@@ -269,8 +273,8 @@ def load_parquet_file(
         cur.execute(
             f"""
             INSERT INTO monitoramento.individuo_evento
-                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao)
-            SELECT DISTINCT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao
+                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao, gera_alerta)
+            SELECT DISTINCT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao, gera_alerta
             FROM {TEMP_TABLE}
             ON CONFLICT DO NOTHING;
             """

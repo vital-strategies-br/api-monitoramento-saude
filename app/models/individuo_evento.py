@@ -1,5 +1,6 @@
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Date,
     DateTime,
     ForeignKey,
@@ -95,4 +96,10 @@ class IndividuoEvento(Base):
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,
+    )
+
+    gera_alerta: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        server_default=str("False"),
     )

@@ -47,6 +47,7 @@ class RelacaoRepository:
             .where(IndividuoEvento.individuo_id == individuo_id)
             .where(IndividuoEvento.tipo_evento == tipo_evento)
             .where(IndividuoEvento.metodo_identificacao != "n_a")
+            .where(IndividuoEvento.gera_alerta.is_(True))
             .order_by(prioridade.asc(), IndividuoEvento.data_identificacao.desc())
             .limit(1)
         )
