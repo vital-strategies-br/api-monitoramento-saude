@@ -26,7 +26,7 @@ class Settings(BaseSettings):
 
     # HMAC / Timestamp
     REQUIRE_HMAC: Optional[bool] = None
-    TIMESTAMP_TOLERANCE_SECONDS: int = 120  # 2 minutos
+    TIMESTAMP_TOLERANCE_SECONDS: int = 300
 
     # CORS / Origin allowlist
     # Use vírgulas: "http://localhost:3000,chrome-extension://abcdef..."
