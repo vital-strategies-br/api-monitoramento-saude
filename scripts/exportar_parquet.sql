@@ -130,7 +130,7 @@ base_result AS (
         (pc.id_pessoa IS NOT NULL) AS gera_alerta
     FROM eventos e
     JOIN identificadores i USING (id_pessoa)
-    LEFT JOIN passou_cnes pc USING (id_pessoa)
+    JOIN passou_cnes pc USING (id_pessoa)
 )
 SELECT *
 FROM base_result
