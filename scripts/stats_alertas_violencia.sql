@@ -12,7 +12,8 @@ SELECT
     MAX(data)                                                                        AS ultimo_dia,
     COUNT(DISTINCT data)                                                             AS dias_com_atividade
 FROM monitoramento.metricas_diarias_endpoint
-WHERE tipo_evento = 'violencia';
+WHERE tipo_evento = 'violencia'
+  AND data >= '2026-03-09';
 
 -- 2. Distribuição por método
 \echo ''
@@ -25,6 +26,7 @@ SELECT
     ROUND(100.0 * SUM(respostas_positivas) / NULLIF(SUM(SUM(respostas_positivas)) OVER (), 0), 2) AS pct_das_positivas
 FROM monitoramento.metricas_diarias_endpoint
 WHERE tipo_evento = 'violencia'
+  AND data >= '2026-03-09'
 GROUP BY metodo_identificacao
 ORDER BY chamadas DESC;
 
@@ -39,5 +41,6 @@ SELECT
                                                    AS taxa_positividade_pct
 FROM monitoramento.metricas_diarias_endpoint
 WHERE tipo_evento = 'violencia'
+  AND data >= '2026-03-09'
 GROUP BY DATE_TRUNC('month', data)
 ORDER BY DATE_TRUNC('month', data);
