@@ -14,20 +14,19 @@ SELECT
 FROM monitoramento.metricas_diarias_endpoint
 WHERE tipo_evento = 'violencia';
 
--- 2. Positivas por método
+-- 2. Distribuição por método
 \echo ''
-\echo '=== 2. Positivas por Método ==='
+\echo '=== 2. Distribuição por Método ==='
 SELECT
     metodo_identificacao,
-    SUM(total_chamadas)       AS chamadas,
-    SUM(respostas_positivas)  AS positivas,
-    ROUND(100.0 * SUM(respostas_positivas) / NULLIF(SUM(total_chamadas), 0), 2)
-                              AS taxa_positividade_pct
+    SUM(total_chamadas)                                                                            AS chamadas,
+    SUM(respostas_positivas)                                                                       AS positivas,
+    ROUND(100.0 * SUM(total_chamadas)      / NULLIF(SUM(SUM(total_chamadas))      OVER (), 0), 2) AS pct_do_total,
+    ROUND(100.0 * SUM(respostas_positivas) / NULLIF(SUM(SUM(respostas_positivas)) OVER (), 0), 2) AS pct_das_positivas
 FROM monitoramento.metricas_diarias_endpoint
 WHERE tipo_evento = 'violencia'
-  AND metodo_identificacao <> 'n_a'
 GROUP BY metodo_identificacao
-ORDER BY positivas DESC;
+ORDER BY chamadas DESC;
 
 -- 3. Tendência mensal
 \echo ''
