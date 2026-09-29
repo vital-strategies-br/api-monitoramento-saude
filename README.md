@@ -32,9 +32,31 @@ String assinada:
 {timestamp}\n{METHOD}\n{PATH}\n{QUERY}\n{sha256(body)}
 ```
 
+## Gerar o parquet
+
+`scripts/exportar_parquet.sql` roda no DuckDB contra o banco de linkage e produz `dados_api.parquet`.
+
+```bash
+# produção: só dados reais
+duckdb -c ".read scripts/exportar_parquet.sql"
+
+# dev: inclui 2 pessoas fictícias para smoke test do endpoint
+duckdb -c "SET VARIABLE incluir_linhas_teste = true;" -c ".read scripts/exportar_parquet.sql"
+```
+
+A lista de CNES das unidades piloto vem de `unidades_piloto.txt`, resolvida por
+`scripts/conferir_unidades_piloto.sql` (somente leitura). Quando a planilha de
+unidades mudar, rode aquele script e reflita a lista no export.
+
 ## Carregar dados a partir de parquet
 
 O script `scripts/load_parquet.py` carrega resultados offline no banco. As dependências do loader já estão instaladas na imagem.
+
+A carga é um upsert idempotente: o parquet é a fonte da verdade para `gera_alerta`
+e `data_identificacao` só avança. Rodar o mesmo parquet duas vezes não duplica nada.
+Use `--dry-run` antes da carga real — ele executa tudo com as constraints e desfaz
+no fim, relatando inclusive quantos eventos já no banco estavam sem alerta apesar
+de o parquet indicar alerta.
 
 ### 1. (Recomendado) Inclusão via container
 

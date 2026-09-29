@@ -1,22 +1,48 @@
+# O banco roda em container nos dois ambientes (dev e prod). O commit
+# 71d532e havia removido este serviço em preparação para uma instância
+# separada, mas o deploy nunca aconteceu e o arquivo passou a divergir do
+# que de fato roda — um `up --remove-orphans` derrubaria o banco.
+#
+# Na migração para RDS, basta apontar POSTGRES_HOST no .env e remover o
+# serviço `db` junto com o deploy que o desliga.
 services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-monitoramento_saude}
+    ports:
+      - "${POSTGRES_HOST_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB:-monitoramento_saude}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   flyway:
     image: flyway/flyway:10
     command: -connectRetries=60 migrate
     environment:
-      FLYWAY_URL: jdbc:postgresql://${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-monitoramento_saude}
+      FLYWAY_URL: jdbc:postgresql://${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-monitoramento_saude}
       FLYWAY_USER: ${POSTGRES_USER}
       FLYWAY_PASSWORD: ${POSTGRES_PASSWORD}
       FLYWAY_SCHEMAS: monitoramento
       FLYWAY_BASELINE_ON_MIGRATE: "true"
     volumes:
       - ./db/migration:/flyway/sql:ro
+    depends_on:
+      db:
+        condition: service_healthy
 
   api:
     build: .
     environment:
       ENV: ${ENV:-prod}
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-localhost}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-monitoramento_saude}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-monitoramento_saude}
 
       # Configurações da API
       API_KEYS: ${API_KEYS}
@@ -29,3 +55,6 @@ services:
     depends_on:
       flyway:
         condition: service_completed_successfully
+
+volumes:
+  postgres_data:

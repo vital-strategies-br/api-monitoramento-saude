@@ -12,12 +12,19 @@ Este script popula as tabelas:
 - monitoramento.individuo_identificador
 - monitoramento.individuo_evento
 
+A carga de eventos é um upsert idempotente: o parquet é a fonte da
+verdade para gera_alerta, e data_identificacao só avança. Requer a
+migração V9, que cria o índice único das linhas sem origem. O relatório
+final aponta quantos eventos já no banco estavam sem alerta apesar de o
+parquet indicar alerta.
+
 Para ler parquet, instale o extra:
     pip install .[loader]
 
 Uso:
     python scripts/load_parquet.py --parquet /caminho/arquivo.parquet
     python scripts/load_parquet.py --parquet /caminho/pasta_com_parquets
+    python scripts/load_parquet.py --parquet /caminho/arquivo.parquet --dry-run
 
 Por padrão, o script usa a variável de ambiente DATABASE_URL.
 """
@@ -142,6 +149,7 @@ def load_parquet_file(
     *,
     batch_size: int,
     strict_identificador: bool,
+    dry_run: bool = False,
 ) -> dict[str, int]:
     if pq is None:  # pragma: no cover
         raise RuntimeError(
@@ -155,8 +163,11 @@ def load_parquet_file(
     _validate_columns(file_path, pf.schema.names)
 
     rows_copiadas = 0
+    rows_ignoradas = 0
 
-    with conn.transaction():
+    # No dry-run tudo roda normalmente (inclusive as constraints) e a
+    # transação é desfeita no fim do bloco.
+    with conn.transaction(force_rollback=dry_run):
         cur = conn.cursor()
 
         cur.execute(
@@ -199,6 +210,13 @@ def load_parquet_file(
                         valor_identificador = "".join(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
+                        # Rede de segurança para parquets gerados antes da
+                        # correção no export: CPF que perdeu o zero à
+                        # esquerda não casa com a consulta da API.
+                        if tipo_identificador == "cpf" and (
+                            1 <= len(valor_identificador) <= 11
+                        ):
+                            valor_identificador = valor_identificador.zfill(11)
                         banco_n, idreg_n = _normalize_origem_pair(
                             banco_origem_identificacao, id_registro_identificacao
                         )
@@ -216,7 +234,9 @@ def load_parquet_file(
                                 gera_alerta,
                             )
                         )
-                    rows_copiadas += 1
+                        rows_copiadas += 1
+                    else:
+                        rows_ignoradas += 1
 
         cur.execute(
             f"""
@@ -270,32 +290,132 @@ def load_parquet_file(
 
             print(msg)
 
+        # Diagnóstico: eventos que já estão no banco sem alerta, mas que o
+        # parquet diz que deveriam alertar. Precisa ser medido antes do
+        # upsert, que é justamente o que vai corrigi-los.
         cur.execute(
             f"""
-            INSERT INTO monitoramento.individuo_evento
-                (individuo_id, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao, gera_alerta)
-            SELECT DISTINCT id_pessoa, tipo_evento, metodo_identificacao, data_identificacao, banco_origem_identificacao, id_registro_identificacao, gera_alerta
-            FROM {TEMP_TABLE}
-            ON CONFLICT DO NOTHING;
+            SELECT
+                count(*)                     FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS eventos,
+                count(DISTINCT ie.individuo_id) FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS pessoas
+            FROM monitoramento.individuo_evento ie
+            JOIN {TEMP_TABLE} s
+              ON s.id_pessoa           = ie.individuo_id
+             AND s.tipo_evento         = ie.tipo_evento
+             AND s.metodo_identificacao = ie.metodo_identificacao
+             AND s.banco_origem_identificacao IS NOT DISTINCT FROM ie.banco_origem_identificacao
+             AND s.id_registro_identificacao  IS NOT DISTINCT FROM ie.id_registro_identificacao;
             """
         )
-        eventos_inseridos = max(cur.rowcount, 0)
+        alertas_corrigidos, pessoas_alerta_corrigidas = cur.fetchone()
+
+        # Upsert em dois ramos, um por índice único parcial: V4 cobre as
+        # linhas com origem preenchida, V9 as de origem nula.
+        cur.execute(
+            f"""
+            WITH origem AS (
+                SELECT
+                    id_pessoa,
+                    tipo_evento,
+                    metodo_identificacao,
+                    max(data_identificacao) AS data_identificacao,
+                    banco_origem_identificacao,
+                    id_registro_identificacao,
+                    bool_or(gera_alerta)    AS gera_alerta
+                FROM {TEMP_TABLE}
+                WHERE banco_origem_identificacao IS NOT NULL
+                  AND id_registro_identificacao  IS NOT NULL
+                GROUP BY id_pessoa, tipo_evento, metodo_identificacao,
+                         banco_origem_identificacao, id_registro_identificacao
+            ), upsert AS (
+                INSERT INTO monitoramento.individuo_evento AS ie
+                    (individuo_id, tipo_evento, metodo_identificacao, data_identificacao,
+                     banco_origem_identificacao, id_registro_identificacao, gera_alerta)
+                SELECT * FROM origem
+                ON CONFLICT (individuo_id, tipo_evento, metodo_identificacao,
+                             banco_origem_identificacao, id_registro_identificacao)
+                    WHERE id_registro_identificacao  IS NOT NULL
+                      AND banco_origem_identificacao IS NOT NULL
+                DO UPDATE SET
+                    gera_alerta        = EXCLUDED.gera_alerta,
+                    data_identificacao = GREATEST(ie.data_identificacao, EXCLUDED.data_identificacao)
+                RETURNING (xmax = 0) AS inserido
+            )
+            SELECT
+                count(*) FILTER (WHERE inserido)     AS inseridos,
+                count(*) FILTER (WHERE NOT inserido) AS atualizados
+            FROM upsert;
+            """
+        )
+        inseridos_origem, atualizados_origem = cur.fetchone()
 
         cur.execute(
-            """
-            SELECT setval(
-                pg_get_serial_sequence('monitoramento.individuo','id'),
-                GREATEST((SELECT COALESCE(MAX(id),0) FROM monitoramento.individuo), 1),
-                true
-            );
+            f"""
+            WITH sem_origem AS (
+                SELECT
+                    id_pessoa,
+                    tipo_evento,
+                    metodo_identificacao,
+                    max(data_identificacao) AS data_identificacao,
+                    bool_or(gera_alerta)    AS gera_alerta
+                FROM {TEMP_TABLE}
+                WHERE banco_origem_identificacao IS NULL
+                   OR id_registro_identificacao  IS NULL
+                GROUP BY id_pessoa, tipo_evento, metodo_identificacao
+            ), upsert AS (
+                INSERT INTO monitoramento.individuo_evento AS ie
+                    (individuo_id, tipo_evento, metodo_identificacao, data_identificacao,
+                     banco_origem_identificacao, id_registro_identificacao, gera_alerta)
+                SELECT
+                    id_pessoa,
+                    tipo_evento,
+                    metodo_identificacao,
+                    data_identificacao,
+                    NULL::monitoramento.banco_origem_identificacao_enum,
+                    NULL::text,
+                    gera_alerta
+                FROM sem_origem
+                ON CONFLICT (individuo_id, tipo_evento, metodo_identificacao)
+                    WHERE id_registro_identificacao  IS NULL
+                      AND banco_origem_identificacao IS NULL
+                DO UPDATE SET
+                    gera_alerta        = EXCLUDED.gera_alerta,
+                    data_identificacao = GREATEST(ie.data_identificacao, EXCLUDED.data_identificacao)
+                RETURNING (xmax = 0) AS inserido
+            )
+            SELECT
+                count(*) FILTER (WHERE inserido)     AS inseridos,
+                count(*) FILTER (WHERE NOT inserido) AS atualizados
+            FROM upsert;
             """
         )
+        inseridos_sem_origem, atualizados_sem_origem = cur.fetchone()
+
+        eventos_inseridos = inseridos_origem + inseridos_sem_origem
+        eventos_atualizados = atualizados_origem + atualizados_sem_origem
+
+        # setval não é transacional: no dry-run ele avançaria a sequência
+        # contando indivíduos que o rollback vai descartar.
+        if not dry_run:
+            cur.execute(
+                """
+                SELECT setval(
+                    pg_get_serial_sequence('monitoramento.individuo','id'),
+                    GREATEST((SELECT COALESCE(MAX(id),0) FROM monitoramento.individuo), 1),
+                    true
+                );
+                """
+            )
 
     return {
         "rows_copiadas": rows_copiadas,
+        "rows_ignoradas": rows_ignoradas,
         "individuos_inseridos": individuos_inseridos,
         "identificadores_inseridos": identificadores_inseridos,
         "eventos_inseridos": eventos_inseridos,
+        "eventos_atualizados": eventos_atualizados,
+        "alertas_corrigidos": alertas_corrigidos,
+        "pessoas_alerta_corrigidas": pessoas_alerta_corrigidas,
     }
 
 
@@ -325,6 +445,11 @@ def main() -> None:
         action="store_true",
         help="Falha quando houver conflito de identificador já existente com id_pessoa diferente.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Executa a carga inteira e desfaz no fim, apenas relatando o que mudaria.",
+    )
 
     args = parser.parse_args()
 
@@ -343,13 +468,11 @@ def main() -> None:
 
     dsn = _dsn_for_psycopg(args.database_url)
 
+    if args.dry_run:
+        print("DRY-RUN: nenhuma alteração será persistida.")
+
     with psycopg.connect(dsn) as conn:
-        total = {
-            "rows_copiadas": 0,
-            "individuos_inseridos": 0,
-            "identificadores_inseridos": 0,
-            "eventos_inseridos": 0,
-        }
+        total: dict[str, int] = {}
 
         for fp in parquet_files:
             res = load_parquet_file(
@@ -357,13 +480,21 @@ def main() -> None:
                 fp,
                 batch_size=args.batch_size,
                 strict_identificador=args.strict_identificador,
+                dry_run=args.dry_run,
             )
 
             print(f"OK: {fp} -> {res}")
             for k, v in res.items():
-                total[k] += v
+                total[k] = total.get(k, 0) + v
 
         print(f"TOTAL: {total}")
+
+        if total.get("alertas_corrigidos"):
+            print(
+                f"ATENÇÃO: {total['alertas_corrigidos']} evento(s) já no banco estavam com "
+                f"gera_alerta=false e o parquet indica alerta "
+                f"({total['pessoas_alerta_corrigidas']} pessoa(s), contadas por arquivo)."
+            )
 
 
 if __name__ == "__main__":
