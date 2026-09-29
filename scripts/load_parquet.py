@@ -295,8 +295,10 @@ def load_parquet_file(
         # upsert, que é justamente o que vai corrigi-los.
         cur.execute(
             f"""
+            -- DISTINCT nos dois: a staging tem uma linha por identificador
+            -- (cpf e cns), então cada evento aparece mais de uma vez no join.
             SELECT
-                count(*)                     FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS eventos,
+                count(DISTINCT ie.id)           FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS eventos,
                 count(DISTINCT ie.individuo_id) FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS pessoas
             FROM monitoramento.individuo_evento ie
             JOIN {TEMP_TABLE} s
