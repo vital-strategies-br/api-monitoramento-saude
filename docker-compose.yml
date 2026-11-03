@@ -1,10 +1,10 @@
-# O banco roda em container nos dois ambientes (dev e prod). O commit
-# 71d532e havia removido este serviço em preparação para uma instância
-# separada, mas o deploy nunca aconteceu e o arquivo passou a divergir do
-# que de fato roda — um `up --remove-orphans` derrubaria o banco.
+# The database runs in a container in both environments (dev and prod).
+# Commit 71d532e had removed this service in preparation for a separate
+# instance, but that deploy never happened and the file drifted from what
+# actually runs — an `up --remove-orphans` would take the database down.
 #
-# Na migração para RDS, basta apontar POSTGRES_HOST no .env e remover o
-# serviço `db` junto com o deploy que o desliga.
+# When migrating to RDS, just point POSTGRES_HOST in .env and remove the
+# `db` service together with the deploy that shuts it down.
 services:
   db:
     image: postgres:16
@@ -44,7 +44,7 @@ services:
       GUNICORN_WORKERS: ${GUNICORN_WORKERS:-2}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-db}:${POSTGRES_PORT:-5432}/${POSTGRES_DB:-monitoramento_saude}
 
-      # Configurações da API
+      # API settings
       API_KEYS: ${API_KEYS}
       API_SECRET: ${API_SECRET}
       REQUIRE_HMAC: ${REQUIRE_HMAC:-false}

@@ -15,7 +15,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
-MetodoIdentificacaoEnum = Enum(
+IdentificationMethodEnum = Enum(
     "n_a",
     "modelo_semantica_explicita",
     "modelo_classificacao_provavel",
@@ -24,7 +24,7 @@ MetodoIdentificacaoEnum = Enum(
     schema="monitoramento",
 )
 
-BancoOrigemIdentificacaoEnum = Enum(
+IdentificationSourceDatabaseEnum = Enum(
     "e-SUS APS",
     "Sinan - Violências",
     name="banco_origem_identificacao_enum",
@@ -32,7 +32,7 @@ BancoOrigemIdentificacaoEnum = Enum(
 )
 
 
-class IndividuoEvento(Base):
+class IndividualEvent(Base):
     __tablename__ = "individuo_evento"
     __table_args__ = (
         Index("idx_individuo_evento_lookup", "individuo_id", "tipo_evento"),
@@ -77,13 +77,13 @@ class IndividuoEvento(Base):
     data_identificacao: Mapped[object] = mapped_column(Date, nullable=False)
 
     metodo_identificacao: Mapped[str] = mapped_column(
-        MetodoIdentificacaoEnum,
+        IdentificationMethodEnum,
         nullable=False,
         server_default="n_a",
     )
 
     banco_origem_identificacao: Mapped[str | None] = mapped_column(
-        BancoOrigemIdentificacaoEnum,
+        IdentificationSourceDatabaseEnum,
         nullable=True,
     )
 

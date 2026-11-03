@@ -1,10 +1,10 @@
--- Rode a partir de uma maquina com acesso ao banco de linkage (hoje via
--- tunel SSH na porta local 5454). As instancias de dev e prod NAO tem
--- esse acesso: elas so recebem o .parquet ja pronto.
+-- Run from a machine with access to the linkage database (currently via an
+-- SSH tunnel on local port 5454). The dev and prod instances do NOT have
+-- that access: they only receive the finished .parquet.
 --
---   ssh -N -L 5454:localhost:5432 <usuario>@<host-do-linkage>
+--   ssh -N -L 5454:localhost:5432 <user>@<linkage-host>
 --
--- A senha sai do ~/.pgpass (permissao 0600), nao daqui.
+-- The password comes from ~/.pgpass (permissions 0600), not from here.
 INSTALL postgres;
 LOAD postgres;
 
@@ -30,10 +30,10 @@ passou_cnes AS (
     JOIN registro_linkage rl USING (id_registro_linkage)
     JOIN estabelecimento_saude es
       ON es.id_estabelecimento_saude = rl.id_estabelecimento_saude
-    -- 61 CNES das 60 unidades piloto de unidades_piloto.txt.
-    -- Derivados por scripts/conferir_unidades_piloto.sql; reexecute
-    -- aquele script e atualize esta lista quando a planilha mudar.
-    -- 'Coelhos' contribui 2 codigos por causa da fusao Coelhos I + II.
+    -- 61 CNES codes for the 60 pilot units in unidades_piloto.txt.
+    -- Derived by scripts/conferir_unidades_piloto.sql; re-run that
+    -- script and update this list whenever the spreadsheet changes.
+    -- 'Coelhos' contributes 2 codes because of the Coelhos I + II merger.
     WHERE es.codigo_cnes IN (
         817, 825, 876, 1163, 1252, 1503, 1511, 1759,
         2011, 2127, 2135, 20567, 20648, 22187, 22195, 22209,
@@ -103,10 +103,10 @@ eventos AS (
     WHERE rn = 1
 ),
 identificadores AS (
-    -- nu_doc perdeu os zeros a esquerda a montante: 17% dos CPFs chegam
-    -- com 10 digitos, 2,6% com 9. Completar com zero recupera o valor --
-    -- 100% dos curtos passam a validar os dois digitos verificadores.
-    -- Sem isso a API nao encontra quem tem CPF iniciado em zero.
+    -- nu_doc lost its leading zeros upstream: 17% of CPFs arrive
+    -- with 10 digits, 2.6% with 9. Left-padding with zeros recovers the value --
+    -- 100% of the short ones then pass both check-digit validations.
+    -- Without this the API cannot find anyone whose CPF starts with zero.
     SELECT DISTINCT
         rb.id_pessoa,
         'cpf'::text AS tipo_identificador,
@@ -164,8 +164,8 @@ SELECT *
 FROM base_result;
 $$)
 
-  -- Duas pessoas ficticias para smoke test do endpoint. Ficam de fora
-  -- por padrao; so entram se a variavel for ligada antes de rodar:
+  -- Two fictitious people for smoke-testing the endpoint. They are excluded
+  -- by default; they are only included if the variable is set before running:
   --   duckdb -c "SET VARIABLE incluir_linhas_teste = true;" \
   --          -c ".read scripts/exportar_parquet.sql"
   UNION ALL

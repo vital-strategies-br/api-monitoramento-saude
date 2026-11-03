@@ -10,17 +10,17 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Ambiente
+    # Environment
     ENV: Literal["dev", "prod"] = "dev"
 
-    # DB (já existia)
+    # DB (pre-existing)
     DATABASE_URL: str
     DATABASE_POOL_SIZE: int = 5
     DATABASE_MAX_OVERFLOW: int = 5
-    DATABASE_POOL_TIMEOUT: int = 60  # segundos
+    DATABASE_POOL_TIMEOUT: int = 60  # seconds
 
     # Auth
-    # Lista chaves separadas por vírgula: "key1,key2,key3"
+    # Comma-separated list of keys: "key1,key2,key3"
     API_KEYS: str = ""
     API_SECRET: str = ""
 
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     TIMESTAMP_TOLERANCE_SECONDS: int = 300
 
     # CORS / Origin allowlist
-    # Use vírgulas: "http://localhost:3000,chrome-extension://abcdef..."
+    # Comma-separated: "http://localhost:3000,chrome-extension://abcdef..."
     ALLOWED_ORIGINS: str = ""
     ENFORCE_ORIGIN_CHECK: bool = True
 

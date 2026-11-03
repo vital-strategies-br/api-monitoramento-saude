@@ -1,8 +1,8 @@
 -- ============================================================
--- Estatísticas básicas: alertas de violência (metricas_diarias_endpoint)
+-- Basic statistics: violence alerts (metricas_diarias_endpoint)
 -- ============================================================
 
--- 1. Taxa de positividade geral
+-- 1. Overall positivity rate
 \echo '=== 1. Taxa de Positividade Geral ==='
 SELECT
     SUM(total_chamadas)                                                              AS total_consultas,
@@ -15,7 +15,7 @@ FROM monitoramento.metricas_diarias_endpoint
 WHERE tipo_evento = 'violencia'
   AND data >= '2026-03-09';
 
--- 2. Distribuição por método
+-- 2. Distribution by method
 \echo ''
 \echo '=== 2. Distribuição por Método ==='
 SELECT
@@ -30,7 +30,7 @@ WHERE tipo_evento = 'violencia'
 GROUP BY metodo_identificacao
 ORDER BY chamadas DESC;
 
--- 3. Tendência mensal
+-- 3. Monthly trend
 \echo ''
 \echo '=== 3. Tendência Mensal ==='
 SELECT
