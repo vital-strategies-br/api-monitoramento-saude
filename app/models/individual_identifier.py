@@ -4,7 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
-class IndividuoIdentificador(Base):
+class IndividualIdentifier(Base):
     __tablename__ = "individuo_identificador"
     __table_args__ = (
         Index(

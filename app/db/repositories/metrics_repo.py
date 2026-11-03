@@ -4,16 +4,16 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 
-class MetricasRepository:
-    async def incr_diario(
+class MetricsRepository:
+    async def increment_daily(
         self,
         db: AsyncSession,
         *,
         endpoint: str,
-        tipo_evento: str,
-        metodo_identificacao: str,
-        dia: date,
-        positivo: bool,
+        event_type: str,
+        identification_method: str | None,
+        day: date,
+        positive: bool,
     ) -> None:
         await db.execute(
             text(
@@ -31,9 +31,9 @@ class MetricasRepository:
             ),
             {
                 "endpoint": endpoint,
-                "tipo_evento": tipo_evento,
-                "metodo_identificacao": metodo_identificacao or "n_a",
-                "data": dia,
-                "pos": 1 if positivo else 0,
+                "tipo_evento": event_type,
+                "metodo_identificacao": identification_method or "n_a",
+                "data": day,
+                "pos": 1 if positive else 0,
             },
         )

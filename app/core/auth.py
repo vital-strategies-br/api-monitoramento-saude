@@ -53,15 +53,15 @@ def _compute_hmac_hex(secret: str, signing_string: str) -> str:
 
 class ApiAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        # 0) Ignorar pre-flight
+        # 0) Skip pre-flight
         if request.method == "OPTIONS":
             return await call_next(request)
 
-        # 1) Exceções
+        # 1) Exempt paths
         if _is_exempt_path(request.url.path):
             return await call_next(request)
 
-        # 2) Validação de origem (complementa CORS; fácil desligar por env)
+        # 2) Origin validation (complements CORS; easy to disable via env)
         if settings.ENFORCE_ORIGIN_CHECK:
             origin = request.headers.get("origin")
             allowed = set(settings.allowed_origins_list())
@@ -75,7 +75,7 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
         if not api_key or api_key not in valid_keys:
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         
-        # 4) Decide se exige HMAC
+        # 4) Decide whether HMAC is required
         if not settings.hmac_required:
             return await call_next(request)
 
@@ -93,7 +93,7 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
         body_bytes = await request.body()
         body_hash = _sha256_hex(body_bytes)
 
-        # 7) Assinatura HMAC
+        # 7) HMAC signature
         signature = request.headers.get("x-signature")
         if not signature or not settings.API_SECRET:
             return JSONResponse({"detail": "Missing signature/secret"}, status_code=401)

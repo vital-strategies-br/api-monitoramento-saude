@@ -1,14 +1,14 @@
 -- ============================================================
--- Resolve os nomes de unidades_piloto.txt em codigos CNES.
--- Somente leitura — seguro para rodar em producao.
+-- Resolves the names in unidades_piloto.txt to CNES codes.
+-- Read-only — safe to run in production.
 --
---   psql "postgresql://USUARIO@HOST:PORTA/linkage_recife3?sslmode=require" \
+--   psql "postgresql://USER@HOST:PORT/linkage_recife3?sslmode=require" \
 --        -X -f scripts/conferir_unidades_piloto.sql
 --
--- Rode a partir da raiz do repo (o \copy usa caminho relativo).
+-- Run from the repo root (\copy uses a relative path).
 --
--- A lista de CNES do bloco 4 e o que alimenta scripts/exportar_parquet.sql.
--- Reexecute isto quando unidades_piloto.txt mudar e reflita o resultado la.
+-- The CNES list from block 4 is what feeds scripts/exportar_parquet.sql.
+-- Re-run this whenever unidades_piloto.txt changes and reflect the result there.
 -- ============================================================
 
 \set ON_ERROR_STOP on
@@ -16,9 +16,9 @@
 CREATE TEMP TABLE piloto (nome_planilha text);
 \copy piloto (nome_planilha) FROM 'unidades_piloto.txt'
 
--- Normaliza para comparacao: sem acento, minuscula, sem o que vem entre
--- parenteses, sem o prefixo 'US <numero>' e sem o token de tipo de
--- unidade. 'US 404 USF MAIS SANTO AMARO III' -> 'santo amaro iii'.
+-- Normalizes for comparison: no accents, lowercase, without anything in
+-- parentheses, without the 'US <number>' prefix and without the unit-type
+-- token. 'US 404 USF MAIS SANTO AMARO III' -> 'santo amaro iii'.
 CREATE OR REPLACE FUNCTION pg_temp.norm(txt text) RETURNS text AS $$
   SELECT btrim(regexp_replace(
     regexp_replace(
@@ -31,8 +31,8 @@ CREATE OR REPLACE FUNCTION pg_temp.norm(txt text) RETURNS text AS $$
     '\s+', ' ', 'g'));
 $$ LANGUAGE sql IMMUTABLE;
 
--- Casos que a normalizacao nao resolve. Cada um foi conferido contra o
--- volume real em registro_linkage no periodo do export.
+-- Cases the normalization does not resolve. Each one was checked against the
+-- actual volume in registro_linkage during the export period.
 CREATE TEMP TABLE override (nome_planilha text, codigo_cnes bigint, motivo text);
 INSERT INTO override VALUES
  ('Alto dos Coqueiros',                     3006468, 'nome_fantasia tem sufixo CORREGO DA JAQUEIRA'),

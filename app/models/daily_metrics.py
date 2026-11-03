@@ -4,7 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
-class MetricasDiariasEndpoint(Base):
+class DailyEndpointMetrics(Base):
     __tablename__ = "metricas_diarias_endpoint"
     __table_args__ = (
         PrimaryKeyConstraint("endpoint", "tipo_evento", "data"),

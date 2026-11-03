@@ -1,7 +1,7 @@
 [project]
 name = "api-monitoramento-saude"
 version = "1.0.0"
-description = "API para monitoramento de eventos e indicadores de saúde"
+description = "API for monitoring health events and indicators"
 readme = "README.md"
 requires-python = ">=3.13,<3.14"
 license = "MIT"

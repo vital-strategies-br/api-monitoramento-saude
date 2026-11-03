@@ -1,32 +1,32 @@
-"""Carregador de resultados (.parquet) para o PostgreSQL.
+"""Loader for result files (.parquet) into PostgreSQL.
 
-O parquet deve conter as colunas:
+The parquet must contain the columns:
 - id_pessoa
 - tipo_evento
 - data_identificacao
 - tipo_identificador
 - valor_identificador
 
-Este script popula as tabelas:
+This script populates the tables:
 - monitoramento.individuo (id = id_pessoa)
 - monitoramento.individuo_identificador
 - monitoramento.individuo_evento
 
-A carga de eventos é um upsert idempotente: o parquet é a fonte da
-verdade para gera_alerta, e data_identificacao só avança. Requer a
-migração V9, que cria o índice único das linhas sem origem. O relatório
-final aponta quantos eventos já no banco estavam sem alerta apesar de o
-parquet indicar alerta.
+The event load is an idempotent upsert: the parquet is the source of
+truth for gera_alerta, and data_identificacao only moves forward. Requires
+migration V9, which creates the unique index for rows without a source. The
+final report shows how many events already in the database had no alert
+even though the parquet indicates one.
 
-Para ler parquet, instale o extra:
+To read parquet, install the extra:
     pip install .[loader]
 
-Uso:
-    python scripts/load_parquet.py --parquet /caminho/arquivo.parquet
-    python scripts/load_parquet.py --parquet /caminho/pasta_com_parquets
-    python scripts/load_parquet.py --parquet /caminho/arquivo.parquet --dry-run
+Usage:
+    python scripts/load_parquet.py --parquet /path/file.parquet
+    python scripts/load_parquet.py --parquet /path/folder_with_parquets
+    python scripts/load_parquet.py --parquet /path/file.parquet --dry-run
 
-Por padrão, o script usa a variável de ambiente DATABASE_URL.
+By default, the script uses the DATABASE_URL environment variable.
 """
 
 import argparse
@@ -56,7 +56,7 @@ COLUMNS = [
     "gera_alerta",
 ]
 
-BANCO_ORIGEM_IDENTIFICACAO_ENUM = set(["e-SUS APS", "Sinan - Violências"])
+IDENTIFICATION_SOURCE_DATABASE_ENUM = set(["e-SUS APS", "Sinan - Violências"])
 
 TEMP_TABLE = "staging_parquet_eventos"
 
@@ -84,7 +84,7 @@ def _iter_parquet_files(path_str: str) -> list[Path]:
 
 def _normalize_dt(value) -> date:
     if value is None:
-        raise TypeError("data_identificacao não pode ser None")
+        raise TypeError("data_identificacao cannot be None")
 
     if isinstance(value, date) and not isinstance(value, datetime):
         return value
@@ -97,10 +97,10 @@ def _normalize_dt(value) -> date:
 
     if isinstance(value, str):
         s = value.strip()
-        # aceita ISO completo ou só data
+        # accepts a full ISO timestamp or just a date
         return date.fromisoformat(s[:10])
 
-    raise TypeError(f"Tipo inválido para data_identificacao: {type(value)!r}")
+    raise TypeError(f"Invalid type for data_identificacao: {type(value)!r}")
 
 
 def _validate_columns(file_path: Path, available: Iterable[str]) -> None:
@@ -108,7 +108,7 @@ def _validate_columns(file_path: Path, available: Iterable[str]) -> None:
     if missing:
         cols = ", ".join(sorted(missing))
         raise ValueError(
-            f"Parquet '{file_path}' não possui as colunas obrigatórias: {cols}"
+            f"Parquet '{file_path}' is missing required columns: {cols}"
         )
 
 
@@ -123,24 +123,24 @@ def _none_if_blank(v):
     return s
 
 
-def _normalize_banco_origem(v):
+def _normalize_source_database(v):
     s = _none_if_blank(v)
     if s is None:
         return None
     # normalize common whitespace issues
     s = " ".join(s.split())
-    return s if s in BANCO_ORIGEM_IDENTIFICACAO_ENUM else None
+    return s if s in IDENTIFICATION_SOURCE_DATABASE_ENUM else None
 
 
-def _normalize_origem_pair(banco, id_registro):
-    banco_n = _normalize_banco_origem(banco)
-    id_n = _none_if_blank(id_registro)
+def _normalize_source_pair(database, record_id):
+    database_n = _normalize_source_database(database)
+    id_n = _none_if_blank(record_id)
 
     # If only one side is present, null out BOTH to satisfy the check constraint
-    if (banco_n is None) != (id_n is None):
+    if (database_n is None) != (id_n is None):
         return (None, None)
 
-    return (banco_n, id_n)
+    return (database_n, id_n)
 
 
 def load_parquet_file(
@@ -148,12 +148,12 @@ def load_parquet_file(
     file_path: Path,
     *,
     batch_size: int,
-    strict_identificador: bool,
+    strict_identifier: bool,
     dry_run: bool = False,
 ) -> dict[str, int]:
     if pq is None:  # pragma: no cover
         raise RuntimeError(
-            "pyarrow não está instalado. Instale com: pip install .[loader]"
+            "pyarrow is not installed. Install it with: pip install .[loader]"
         ) from _PYARROW_IMPORT_ERROR
 
     if not file_path.exists():
@@ -162,11 +162,11 @@ def load_parquet_file(
     pf = pq.ParquetFile(file_path)
     _validate_columns(file_path, pf.schema.names)
 
-    rows_copiadas = 0
-    rows_ignoradas = 0
+    rows_copied = 0
+    rows_skipped = 0
 
-    # No dry-run tudo roda normalmente (inclusive as constraints) e a
-    # transação é desfeita no fim do bloco.
+    # In dry-run everything runs normally (including the constraints) and the
+    # transaction is rolled back at the end of the block.
     with conn.transaction(force_rollback=dry_run):
         cur = conn.cursor()
 
@@ -206,18 +206,18 @@ def load_parquet_file(
                         continue
 
                     if tipo_identificador in {"cpf", "cns"}:
-                        # Remover caracteres não numéricos
+                        # Remove non-numeric characters
                         valor_identificador = "".join(
                             ch for ch in str(valor_identificador) if ch.isdigit()
                         )
-                        # Rede de segurança para parquets gerados antes da
-                        # correção no export: CPF que perdeu o zero à
-                        # esquerda não casa com a consulta da API.
+                        # Safety net for parquets generated before the
+                        # export fix: a CPF that lost its leading zero
+                        # does not match the API lookup.
                         if tipo_identificador == "cpf" and (
                             1 <= len(valor_identificador) <= 11
                         ):
                             valor_identificador = valor_identificador.zfill(11)
-                        banco_n, idreg_n = _normalize_origem_pair(
+                        database_n, record_id_n = _normalize_source_pair(
                             banco_origem_identificacao, id_registro_identificacao
                         )
 
@@ -229,14 +229,14 @@ def load_parquet_file(
                                 _normalize_dt(data_identificacao),
                                 str(tipo_identificador),
                                 str(valor_identificador),
-                                banco_n,
-                                idreg_n,
+                                database_n,
+                                record_id_n,
                                 gera_alerta,
                             )
                         )
-                        rows_copiadas += 1
+                        rows_copied += 1
                     else:
-                        rows_ignoradas += 1
+                        rows_skipped += 1
 
         cur.execute(
             f"""
@@ -246,7 +246,7 @@ def load_parquet_file(
             ON CONFLICT (id) DO NOTHING;
             """
         )
-        individuos_inseridos = max(cur.rowcount, 0)
+        individuals_inserted = max(cur.rowcount, 0)
 
         cur.execute(
             f"""
@@ -257,7 +257,7 @@ def load_parquet_file(
             ON CONFLICT (tipo_identificador, valor_identificador) DO NOTHING;
             """
         )
-        identificadores_inseridos = max(cur.rowcount, 0)
+        identifiers_inserted = max(cur.rowcount, 0)
 
         cur.execute(
             f"""
@@ -274,29 +274,29 @@ def load_parquet_file(
             LIMIT 5;
             """
         )
-        conflitos = cur.fetchall()
-        if conflitos:
-            linhas = [
-                f"- {t}={v}: novo={novo} existente={existente}"
-                for (t, v, novo, existente) in conflitos
+        conflicts = cur.fetchall()
+        if conflicts:
+            lines = [
+                f"- {t}={v}: new={new} existing={existing}"
+                for (t, v, new, existing) in conflicts
             ]
             msg = (
-                "Conflito de identificador: o mesmo (tipo_identificador, valor_identificador) apareceu com id_pessoa diferente.\n"
-                + "\n".join(linhas)
+                "Identifier conflict: the same (tipo_identificador, valor_identificador) appeared with a different id_pessoa.\n"
+                + "\n".join(lines)
             )
 
-            if strict_identificador:
+            if strict_identifier:
                 raise RuntimeError(msg)
 
             print(msg)
 
-        # Diagnóstico: eventos que já estão no banco sem alerta, mas que o
-        # parquet diz que deveriam alertar. Precisa ser medido antes do
-        # upsert, que é justamente o que vai corrigi-los.
+        # Diagnostic: events already in the database without an alert that the
+        # parquet says should alert. Must be measured before the
+        # upsert, which is exactly what will fix them.
         cur.execute(
             f"""
-            -- DISTINCT nos dois: a staging tem uma linha por identificador
-            -- (cpf e cns), então cada evento aparece mais de uma vez no join.
+            -- DISTINCT on both: staging has one row per identifier
+            -- (cpf and cns), so each event appears more than once in the join.
             SELECT
                 count(DISTINCT ie.id)           FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS eventos,
                 count(DISTINCT ie.individuo_id) FILTER (WHERE NOT ie.gera_alerta AND s.gera_alerta) AS pessoas
@@ -309,10 +309,10 @@ def load_parquet_file(
              AND s.id_registro_identificacao  IS NOT DISTINCT FROM ie.id_registro_identificacao;
             """
         )
-        alertas_corrigidos, pessoas_alerta_corrigidas = cur.fetchone()
+        alerts_fixed, people_alerts_fixed = cur.fetchone()
 
-        # Upsert em dois ramos, um por índice único parcial: V4 cobre as
-        # linhas com origem preenchida, V9 as de origem nula.
+        # Upsert in two branches, one per partial unique index: V4 covers
+        # rows with a source set, V9 those with a null source.
         cur.execute(
             f"""
             WITH origem AS (
@@ -349,7 +349,7 @@ def load_parquet_file(
             FROM upsert;
             """
         )
-        inseridos_origem, atualizados_origem = cur.fetchone()
+        inserted_with_source, updated_with_source = cur.fetchone()
 
         cur.execute(
             f"""
@@ -391,13 +391,13 @@ def load_parquet_file(
             FROM upsert;
             """
         )
-        inseridos_sem_origem, atualizados_sem_origem = cur.fetchone()
+        inserted_without_source, updated_without_source = cur.fetchone()
 
-        eventos_inseridos = inseridos_origem + inseridos_sem_origem
-        eventos_atualizados = atualizados_origem + atualizados_sem_origem
+        events_inserted = inserted_with_source + inserted_without_source
+        events_updated = updated_with_source + updated_without_source
 
-        # setval não é transacional: no dry-run ele avançaria a sequência
-        # contando indivíduos que o rollback vai descartar.
+        # setval is not transactional: in dry-run it would advance the sequence
+        # counting individuals that the rollback will discard.
         if not dry_run:
             cur.execute(
                 """
@@ -410,54 +410,54 @@ def load_parquet_file(
             )
 
     return {
-        "rows_copiadas": rows_copiadas,
-        "rows_ignoradas": rows_ignoradas,
-        "individuos_inseridos": individuos_inseridos,
-        "identificadores_inseridos": identificadores_inseridos,
-        "eventos_inseridos": eventos_inseridos,
-        "eventos_atualizados": eventos_atualizados,
-        "alertas_corrigidos": alertas_corrigidos,
-        "pessoas_alerta_corrigidas": pessoas_alerta_corrigidas,
+        "rows_copiadas": rows_copied,
+        "rows_ignoradas": rows_skipped,
+        "individuos_inseridos": individuals_inserted,
+        "identificadores_inseridos": identifiers_inserted,
+        "eventos_inseridos": events_inserted,
+        "eventos_atualizados": events_updated,
+        "alertas_corrigidos": alerts_fixed,
+        "pessoas_alerta_corrigidas": people_alerts_fixed,
     }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Carrega arquivos .parquet (resultados offline) para o banco PostgreSQL da API."
+        description="Loads .parquet files (offline results) into the API's PostgreSQL database."
     )
     parser.add_argument(
         "--parquet",
         action="append",
         required=True,
-        help="Caminho para um arquivo .parquet ou uma pasta contendo .parquet (pode repetir).",
+        help="Path to a .parquet file or a folder containing .parquet files (repeatable).",
     )
     parser.add_argument(
         "--database-url",
         default=os.getenv("DATABASE_URL", ""),
-        help="URL do banco (default: env DATABASE_URL).",
+        help="Database URL (default: env DATABASE_URL).",
     )
     parser.add_argument(
         "--batch-size",
         type=int,
         default=5000,
-        help="Quantidade de linhas por batch ao ler o parquet.",
+        help="Number of rows per batch when reading the parquet.",
     )
     parser.add_argument(
         "--strict-identificador",
         action="store_true",
-        help="Falha quando houver conflito de identificador já existente com id_pessoa diferente.",
+        help="Fail when an existing identifier conflicts with a different id_pessoa.",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Executa a carga inteira e desfaz no fim, apenas relatando o que mudaria.",
+        help="Run the full load and roll back at the end, only reporting what would change.",
     )
 
     args = parser.parse_args()
 
     if not args.database_url:
         raise SystemExit(
-            "DATABASE_URL não informado (use --database-url ou env DATABASE_URL)."
+            "DATABASE_URL not provided (use --database-url or env DATABASE_URL)."
         )
 
     parquet_files: list[Path] = []
@@ -466,12 +466,12 @@ def main() -> None:
 
     parquet_files = [p for p in parquet_files if p.exists()]
     if not parquet_files:
-        raise SystemExit("Nenhum arquivo .parquet encontrado.")
+        raise SystemExit("No .parquet files found.")
 
     dsn = _dsn_for_psycopg(args.database_url)
 
     if args.dry_run:
-        print("DRY-RUN: nenhuma alteração será persistida.")
+        print("DRY-RUN: no changes will be persisted.")
 
     with psycopg.connect(dsn) as conn:
         total: dict[str, int] = {}
@@ -481,7 +481,7 @@ def main() -> None:
                 conn,
                 fp,
                 batch_size=args.batch_size,
-                strict_identificador=args.strict_identificador,
+                strict_identifier=args.strict_identificador,
                 dry_run=args.dry_run,
             )
 
@@ -493,9 +493,9 @@ def main() -> None:
 
         if total.get("alertas_corrigidos"):
             print(
-                f"ATENÇÃO: {total['alertas_corrigidos']} evento(s) já no banco estavam com "
-                f"gera_alerta=false e o parquet indica alerta "
-                f"({total['pessoas_alerta_corrigidas']} pessoa(s), contadas por arquivo)."
+                f"WARNING: {total['alertas_corrigidos']} event(s) already in the database had "
+                f"gera_alerta=false while the parquet indicates an alert "
+                f"({total['pessoas_alerta_corrigidas']} person(s), counted per file)."
             )
 
 

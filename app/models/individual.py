@@ -4,7 +4,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.models.base import Base
 
 
-class Individuo(Base):
+class Individual(Base):
     __tablename__ = "individuo"
     __table_args__ = {"schema": "monitoramento"}
 
