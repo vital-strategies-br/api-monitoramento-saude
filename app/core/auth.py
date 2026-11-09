@@ -8,18 +8,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
 from app.core.config import settings
-
-
-EXEMPT_PATH_PREFIXES = (
-    "/health",
-    "/docs",
-    "/openapi.json",
-    "/redoc",
-)
-
-
-def _is_exempt_path(path: str) -> bool:
-    return any(path == p or path.startswith(p + "/") for p in EXEMPT_PATH_PREFIXES)
+from app.utils.http import is_public_request
+from app.utils.text import sha256_hex
 
 
 def _normalize_timestamp(ts_raw: str) -> Optional[int]:
@@ -32,10 +22,6 @@ def _normalize_timestamp(ts_raw: str) -> Optional[int]:
     if ts_int >= 1_000_000_000_000:
         ts_int = ts_int // 1000
     return ts_int
-
-
-def _sha256_hex(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def _build_signing_string(request: Request, ts_seconds: int, body_hash_hex: str) -> str:
@@ -53,12 +39,8 @@ def _compute_hmac_hex(secret: str, signing_string: str) -> str:
 
 class ApiAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
-        # 0) Skip pre-flight
-        if request.method == "OPTIONS":
-            return await call_next(request)
-
-        # 1) Exempt paths
-        if _is_exempt_path(request.url.path):
+        # 0-1) Skip pre-flight and public paths
+        if is_public_request(request.method, request.url.path):
             return await call_next(request)
 
         # 2) Origin validation (complements CORS; easy to disable via env)
@@ -91,7 +73,7 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
 
         # 6) Body hash
         body_bytes = await request.body()
-        body_hash = _sha256_hex(body_bytes)
+        body_hash = sha256_hex(body_bytes)
 
         # 7) HMAC signature
         signature = request.headers.get("x-signature")
