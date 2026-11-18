@@ -1,0 +1,109 @@
+name: Staging - test & deploy
+
+on:
+  push:
+    branches: [staging]
+  pull_request:
+    branches: [staging]
+  workflow_dispatch:
+
+# Never run two staging deploys at the same time; a newer push waits for the current one.
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ".[dev,loader]"
+
+      - name: Run pytest
+        # tests/conftest.py sets a dummy DATABASE_URL; tests never connect to a DB.
+        run: pytest -q
+
+      - name: Type check (mypy)
+        # Non-blocking until the codebase is confirmed clean under `strict = true`.
+        continue-on-error: true
+        run: mypy app
+
+  build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: api-monitoramento-saude:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to staging
+    runs-on: ubuntu-latest
+    needs: [test, build]
+    # Only deploy on real pushes/manual runs to staging, never on PRs.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/staging'
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    steps:
+      - name: Update server via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.STAGING_DEPLOY_PATH }}
+          SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.STAGING_SSH_HOST }}
+          username: ${{ secrets.STAGING_SSH_USER }}
+          key: ${{ secrets.STAGING_SSH_KEY }}
+          port: ${{ secrets.STAGING_SSH_PORT || 22 }}
+          envs: DEPLOY_PATH,SHA
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "$DEPLOY_PATH"
+
+            # .env lives only on the server and is git-ignored; it is left untouched.
+            git fetch --prune origin staging
+            git checkout staging
+            git reset --hard "$SHA"
+
+            # Runs flyway migrations, then rebuilds/restarts the API.
+            # No --remove-orphans: see the note at the top of docker-compose.yml.
+            docker compose up -d --build
+            docker image prune -f
+
+            # Wait for the API to come up healthy (app + DB).
+            for i in $(seq 1 30); do
+              # /health/db returns 200 even when the DB is down, so check the body.
+              if curl -fsS http://localhost:8000/health/db 2>/dev/null | grep -q '"database": *"up"'; then
+                echo "API healthy at $SHA"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "API did not become healthy in time" >&2
+            docker compose ps
+            docker compose logs --tail=100 api flyway
+            exit 1
