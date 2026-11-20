@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from fastapi import Header, HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
 
@@ -8,7 +10,7 @@ def swagger_api_key(
     api_key: str | None = Security(api_key_header),
 ) -> str:
     if not api_key:
-        raise HTTPException(status_code=401, detail="Missing X-API-Key")
+        raise HTTPException(status_code=HTTPStatus.UNAUTHORIZED, detail="Missing X-API-Key")
     return api_key
 
 
