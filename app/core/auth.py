@@ -1,14 +1,16 @@
 import hmac
 import time
 import hashlib
+from http import HTTPStatus
 from typing import Iterable, Optional
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+from starlette.responses import Response
 
+from app.core import messages
 from app.core.config import settings
-from app.utils.http import is_public_request
+from app.utils.http import error_response, is_public_request
 from app.utils.text import sha256_hex
 
 
@@ -49,13 +51,13 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
             allowed = set(settings.allowed_origins_list())
 
             if origin and allowed and origin not in allowed:
-                return JSONResponse({"detail": "Origin not allowed"}, status_code=403)
+                return error_response(HTTPStatus.FORBIDDEN, messages.ORIGIN_NOT_ALLOWED)
 
         # 3) API key (header)
         api_key = request.headers.get("x-api-key")
         valid_keys: Iterable[str] = settings.api_keys_list()
         if not api_key or api_key not in valid_keys:
-            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+            return error_response(HTTPStatus.UNAUTHORIZED, messages.UNAUTHORIZED)
         
         # 4) Decide whether HMAC is required
         if not settings.hmac_required:
@@ -65,11 +67,11 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
         ts_raw = request.headers.get("x-timestamp")
         ts_seconds = _normalize_timestamp(ts_raw) if ts_raw else None
         if ts_seconds is None:
-            return JSONResponse({"detail": "Missing/invalid X-Timestamp"}, status_code=401)
+            return error_response(HTTPStatus.UNAUTHORIZED, messages.TIMESTAMP_INVALID)
 
         now = int(time.time())
         if abs(now - ts_seconds) > settings.TIMESTAMP_TOLERANCE_SECONDS:
-            return JSONResponse({"detail": "Stale request"}, status_code=401)
+            return error_response(HTTPStatus.UNAUTHORIZED, messages.TIMESTAMP_STALE)
 
         # 6) Body hash
         body_bytes = await request.body()
@@ -78,12 +80,12 @@ class ApiAuthMiddleware(BaseHTTPMiddleware):
         # 7) HMAC signature
         signature = request.headers.get("x-signature")
         if not signature or not settings.API_SECRET:
-            return JSONResponse({"detail": "Missing signature/secret"}, status_code=401)
+            return error_response(HTTPStatus.UNAUTHORIZED, messages.SIGNATURE_MISSING)
 
         signing_string = _build_signing_string(request, ts_seconds, body_hash)
         expected = _compute_hmac_hex(settings.API_SECRET, signing_string)
 
         if not hmac.compare_digest(signature, expected):
-            return JSONResponse({"detail": "Invalid signature"}, status_code=401)
+            return error_response(HTTPStatus.UNAUTHORIZED, messages.SIGNATURE_INVALID)
 
         return await call_next(request)

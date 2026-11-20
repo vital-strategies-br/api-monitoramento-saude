@@ -1,3 +1,5 @@
+from http import HTTPStatus
+
 from starlette.datastructures import Headers
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
@@ -23,7 +25,7 @@ class BodySizeLimitMiddleware:
             return
 
         limit = settings.MAX_REQUEST_BODY_BYTES
-        too_large = error_response(413, messages.BODY_TOO_LARGE.format(max_bytes=limit))
+        too_large = error_response(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, messages.BODY_TOO_LARGE.format(max_bytes=limit))
 
         declared = Headers(scope=scope).get("content-length", "")
         if declared.isdigit() and int(declared) > limit:

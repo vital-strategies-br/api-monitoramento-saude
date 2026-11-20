@@ -111,7 +111,7 @@ def test_batch_limit_is_configurable(client, monkeypatch):
 
 @pytest.mark.parametrize("body, detail", [
     ({}, "eventos: campo obrigatório ausente"),
-    ({"eventos": None}, "eventos: valor deve ser uma lista"),
+    ({"eventos": None}, "eventos: valor nulo não permitido"),
     ({"eventos": "x"}, "eventos: valor deve ser uma lista"),
     ([], "valor deve ser um objeto JSON"),
 ])
@@ -267,3 +267,97 @@ def test_route_is_protected_by_hmac(client, monkeypatch, valid_signature):
         "Content-Type": "application/json",
     })
     assert response.status_code == (200 if valid_signature else 401)
+
+
+# --- unpredictable client values (JS null / undefined / bad text) -------------
+
+def send_raw(client, body: bytes, content_type="application/json"):
+    return client.post(PATH, content=body, headers={"X-API-Key": API_KEY, "Content-Type": content_type})
+
+
+def with_member(event: dict, member: bytes) -> bytes:
+    """JSON text of `event` with one raw JSON member appended (e.g. rb'"x": NaN')."""
+    return orjson.dumps(event)[:-1] + b", " + member + b"}"
+
+
+def batch(*events: bytes) -> bytes:
+    return b'{"eventos": [' + b", ".join(events) + b"]}"
+
+
+@pytest.mark.parametrize("body, detail", [
+    (b"null", "corpo da requisição ausente"),
+    (b"", "corpo da requisição ausente"),
+    (b"undefined", "JSON malformado"),
+    (b"{'eventos': []}", "JSON malformado"),
+    (batch(with_member(EXAMPLE_EVENT, b'"x": ' + b"[" * 5000 + b"]" * 5000)), "JSON malformado"),
+    (b'{"eventos": ["\xff\xfe"]}', "JSON malformado"),
+])
+def test_unparseable_or_null_body_returns_422_never_500(client, body, detail):
+    response = send_raw(client, body)
+    assert response.status_code == 422
+    assert response.json() == {"detail": detail}
+
+
+@pytest.mark.parametrize("event, campo", [
+    (None, "eventos[0]"),
+    ({**EXAMPLE_EVENT, "evento_id": None}, "evento_id"),
+    ({**EXAMPLE_EVENT, "alerta_id": None}, "alerta_id"),
+    ({**EXAMPLE_EVENT, "evento": None}, "evento"),
+])
+def test_null_required_value_is_rejected_by_name(client, event, campo):
+    response = send(client, {"eventos": [event, make_event()]})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["aceitos"] == 1
+    assert body["rejeitados"][0]["campo"] == campo
+    assert body["rejeitados"][0]["mensagem"] == messages.NULL_VALUE
+
+
+def test_null_optional_fields_are_accepted(client):
+    event = make_event(exibicao_id=None, etapa2_pergunta_id=None, etapa2_opcoes_ids=[None])
+    assert send(client, {"eventos": [event]}).json() == {"aceitos": 1, "duplicados": 0, "rejeitados": []}
+
+
+def test_text_undefined_is_reported_as_invalid_uuid(client):
+    response = send(client, {"eventos": [make_event(evento_id="undefined")]})
+    assert response.json()["rejeitados"] == [{
+        "evento_id": "undefined", "campo": "evento_id", "mensagem": "valor não é um UUID válido",
+    }]
+
+
+@pytest.mark.parametrize("member, campo, mensagem", [
+    (rb'"unidade_cnes": "00\u000000"', "unidade_cnes", messages.INVALID_TEXT),
+    (rb'"extra": {"lista": ["ok", "\u0000"]}', "extra.lista.1", messages.INVALID_TEXT),
+    (rb'"x": "\ud800"', "x", messages.INVALID_TEXT),
+    (rb'"a\u0000b": 1', "eventos[0]", messages.INVALID_TEXT),
+    (rb'"etapa": NaN', "etapa", messages.INVALID_NUMBER),
+    (rb'"etapa": -Infinity', "etapa", messages.INVALID_NUMBER),
+    (rb'"extra": [1e400]', "extra.0", messages.INVALID_NUMBER),
+])
+def test_unstorable_value_rejects_only_that_event(client, member, campo, mensagem):
+    good = make_event()
+    response = send_raw(client, batch(with_member(make_event(), member), orjson.dumps(good)))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["aceitos"] == 1
+    assert body["rejeitados"][0]["campo"] == campo
+    assert body["rejeitados"][0]["mensagem"] == mensagem
+    stored = service._repo.insert_new.call_args.kwargs["events"]
+    assert [str(e["evento_id"]) for e in stored] == [good["evento_id"]]
+
+
+def test_unencodable_evento_id_is_not_echoed(client):
+    event = rb'{"evento_id": "\ud800", "evento": "alerta_aberto", "alerta_id": "%s"}' % (
+        EXAMPLE_EVENT["alerta_id"].encode()
+    )
+    response = send_raw(client, batch(event))
+    assert response.status_code == 200
+    assert response.json()["rejeitados"] == [{
+        "evento_id": None, "campo": "evento_id", "mensagem": messages.INVALID_TEXT,
+    }]
+
+
+def test_non_json_content_type_returns_422(client):
+    response = send_raw(client, orjson.dumps({"eventos": [make_event()]}), content_type="text/plain")
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)

@@ -9,6 +9,7 @@ from app.core.errors import internal_exception_handler
 from app.core.logging import configure_logging, RequestLoggingMiddleware
 from app.core.rate_limit import RateLimitMiddleware
 from app.db.session import db_ping
+from app.utils.openapi import keep_nulls_in_examples
 
 configure_logging()
 
@@ -27,7 +28,7 @@ app = FastAPI(
         },
         {
             "name": "telemetria",
-            "description": "Recebimento de eventos do plugin de alertas para o painel de monitoramento.",
+            "description": "Recebimento dos eventos do plugin de alertas: exibição, orientação e feedback dos profissionais.",
         },
         {
             "name": "health",
@@ -53,6 +54,7 @@ app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(api_router, prefix="/api/v1")
 app.add_exception_handler(Exception, internal_exception_handler)
+keep_nulls_in_examples(app)
 
 
 @app.get("/health", tags=["health"])

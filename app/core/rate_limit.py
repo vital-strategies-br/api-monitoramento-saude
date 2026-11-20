@@ -1,6 +1,7 @@
 import math
 import time
 from collections import defaultdict
+from http import HTTPStatus
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -63,7 +64,7 @@ class RateLimitMiddleware:
             return
 
         response = error_response(
-            429,
+            HTTPStatus.TOO_MANY_REQUESTS,
             messages.RATE_LIMITED.format(segundos=retry_after),
             headers={"Retry-After": str(retry_after)},
         )

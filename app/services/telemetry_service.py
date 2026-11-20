@@ -6,6 +6,7 @@ from uuid import UUID
 
 import orjson
 from pydantic import ValidationError
+from sqlalchemy.exc import DataError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import messages
@@ -14,7 +15,7 @@ from app.db.repositories.telemetry_repo import TelemetryEventRepository
 from app.models.telemetry_event import ALERT_CLOSED_EVENT
 from app.schemas.telemetry import RejectedEvent, TelemetryBatchResponse, TelemetryEventIn
 from app.services.exceptions import BatchTooLargeError, EmptyBatchError
-from app.utils.validation import error_field, error_message
+from app.utils.validation import error_field, error_message, is_storable_text
 
 logger = logging.getLogger("app.telemetria")
 
@@ -26,6 +27,15 @@ _ALERTA_ID = "alerta_id"
 class _Candidate:
     event: TelemetryEventIn
     payload: dict[str, Any]
+    index: int  # position in the batch, for `eventos[N]` rejections
+
+    def to_row(self) -> dict[str, Any]:
+        return {
+            "evento_id": self.event.evento_id,
+            "evento": self.event.evento,
+            "alerta_id": self.event.alerta_id,
+            "payload": self.payload,
+        }
 
 
 @dataclass
@@ -44,7 +54,7 @@ class _BatchOutcome:
 
 
 class TelemetryService:
-    """Receives dashboard event batches from the plugin backend (spec section 8).
+    """Receives batches of alert plugin events from the plugin backend (spec section 8).
 
     Every event ends in exactly one bucket, so
     aceitos + duplicados + len(rejeitados) == number of events sent.
@@ -108,7 +118,7 @@ class TelemetryService:
                     continue
                 closed_alerts.add(event.alerta_id)
 
-            candidates[event.evento_id] = _Candidate(event=event, payload=raw)
+            candidates[event.evento_id] = _Candidate(event=event, payload=raw, index=index)
         return candidates
 
     async def _store(
@@ -120,22 +130,23 @@ class TelemetryService:
         created_by: str,
     ) -> None:
         """Insert new events; classify the skipped ones as duplicate or repeated closure."""
-        inserted = await self._repo.insert_new(
-            db,
-            events=[
-                {
-                    "evento_id": c.event.evento_id,
-                    "evento": c.event.evento,
-                    "alerta_id": c.event.alerta_id,
-                    "payload": c.payload,
-                }
-                for c in candidates.values()
-            ],
-            created_by=created_by,
-        )
+        refused: list[_Candidate] = []
+        try:
+            inserted = await self._repo.insert_new(
+                db, events=[c.to_row() for c in candidates.values()], created_by=created_by,
+            )
+        except DataError as exc:
+            # A value validation did not foresee was refused by PostgreSQL (e.g. in
+            # the JSONB payload). The bulk insert is the transaction's first statement,
+            # so rolling back loses nothing; retry event by event to isolate the culprit.
+            await db.rollback()
+            _log(logging.WARNING, {"event": "telemetria_lote_reprocessado", "erro": _db_error(exc)})
+            inserted, refused = await self._insert_each(db, candidates, created_by=created_by)
         outcome.accepted += len(inserted)
+        for candidate in refused:
+            outcome.reject(candidate.payload, f"eventos[{candidate.index}]", messages.UNSTORABLE_EVENT)
 
-        skipped = candidates.keys() - inserted
+        skipped = candidates.keys() - inserted - {c.event.evento_id for c in refused}
         stored = await self._repo.find_payloads(db, evento_ids=skipped)
         for evento_id in skipped:
             candidate = candidates[evento_id]
@@ -145,6 +156,36 @@ class TelemetryService:
             else:
                 # Not stored under its own evento_id, so the closure index rejected it.
                 _reject_repeated_closure(outcome, candidate.payload, candidate.event)
+
+    async def _insert_each(
+        self,
+        db: AsyncSession,
+        candidates: dict[UUID, _Candidate],
+        *,
+        created_by: str,
+    ) -> tuple[set[UUID], list[_Candidate]]:
+        """Insert events one by one, each in a savepoint; return (inserted ids, refused events).
+
+        A refused event only rolls back its own savepoint, so the rest of the batch
+        still commits together.
+        """
+        inserted: set[UUID] = set()
+        refused: list[_Candidate] = []
+        for candidate in candidates.values():
+            try:
+                async with db.begin_nested():
+                    inserted |= await self._repo.insert_new(
+                        db, events=[candidate.to_row()], created_by=created_by,
+                    )
+            except DataError as exc:
+                refused.append(candidate)
+                _log(logging.WARNING, {
+                    "event": "telemetria_evento_nao_armazenavel",
+                    "evento_id": str(candidate.event.evento_id),
+                    "evento": candidate.event.evento,
+                    "erro": _db_error(exc),
+                })
+        return inserted, refused
 
     @staticmethod
     def _log_batch(total: int, outcome: _BatchOutcome) -> None:
@@ -161,8 +202,9 @@ class TelemetryService:
 
 
 def _raw_evento_id(raw: Any) -> str | None:
+    """The client's evento_id, echoed only when it is text that can be safely returned."""
     value = raw.get(_EVENTO_ID) if isinstance(raw, dict) else None
-    return value if isinstance(value, str) else None
+    return value if isinstance(value, str) and is_storable_text(value) else None
 
 
 def _reject_repeated_closure(outcome: _BatchOutcome, raw: Any, event: TelemetryEventIn) -> None:
@@ -187,6 +229,11 @@ def _log_if_divergent(event: TelemetryEventIn, *, stored: dict[str, Any], receiv
             "evento": event.evento,
             "campos_divergentes": differing,
         })
+
+
+def _db_error(exc: DataError) -> str:
+    """Name of the driver error (e.g. UntranslatableCharacter); never its text, which can echo values."""
+    return type(exc.orig).__name__
 
 
 def _log(level: int, entry: dict[str, Any]) -> None:

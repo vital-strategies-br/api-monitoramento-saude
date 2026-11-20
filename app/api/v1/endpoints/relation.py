@@ -1,3 +1,4 @@
+from http import HTTPStatus
 from typing import List, Literal
 from uuid import UUID
 
@@ -122,11 +123,10 @@ class RelationConflictError(BaseModel):
         "A resposta é `relacionado=true` quando há pelo menos um registro de evento para o mesmo indivíduo associado."
         "O campo `metodo_identificacao` indica o método utilizado para estabelecer a relação."
     ),
+    # 401, 403, 413, 429 and 500 are documented for every route in app/api/v1/responses.py.
     responses={
-        401: {"description": "Não autorizado (API Key/HMAC ausentes ou inválidos)."},
-        409: {"description": "Identificadores correspondem a mais de um indivíduo."},
-        422: {"description": "Erro de validação do payload."},
-        500: {"description": "Erro interno."},
+        HTTPStatus.CONFLICT: {"description": "Identificadores correspondem a mais de um indivíduo."},
+        HTTPStatus.UNPROCESSABLE_ENTITY: {"description": "Erro de validação do payload."},
     },
 )
 async def relacao(
@@ -150,7 +150,7 @@ async def relacao(
         )
     except ConflictingIdentifiersError as e:
         raise HTTPException(
-            status_code=409,
+            status_code=HTTPStatus.CONFLICT,
             detail={"code": "IDENTIFICADORES_CONFLITANTES", "message": str(e)},
         )
 

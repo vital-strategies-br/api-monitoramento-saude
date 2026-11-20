@@ -134,8 +134,10 @@ frontend display require a separate client acknowledgement mechanism.
 
 ## Telemetry events
 
-`POST /api/v1/telemetria/eventos` receives dashboard events from the alert plugin
-backend (Pitang), as defined in section 8 of the Alert Plugin Final Specification.
+`POST /api/v1/telemetria/eventos` receives the alert plugin's events, sent by the
+plugin backend (Pitang): alert displays, guidance steps, action buttons and the
+feedback professionals record about each alert (section 8 of the Alert Plugin Final
+Specification).
 It uses the same `X-API-Key` + HMAC authentication as the query API. Apply Flyway
 migration V12 before running this version.
 
@@ -155,8 +157,25 @@ Every event in a batch lands in exactly one bucket, so
 | `evento_id` already received (same call or earlier) | ignored, first one wins, counted in `duplicados` |
 | Same `evento_id` with different content | as above, plus a `telemetria_duplicado_divergente` warning log (field names only) |
 | Second `alerta_encerrado` for the same `alerta_id` | `rejeitados`, `campo: alerta_id` |
-| Not an object, missing/invalid `evento_id` or `alerta_id`, unknown `evento`, or one of `alerta_tipo`, `alerta_origem`, `atualizacao_base_id`, `paciente_id` present | `rejeitados`, one item per event; `evento_id` is `null` when the event has no string `evento_id` |
+| Not an object, missing/invalid `evento_id` or `alerta_id`, unknown `evento`, or one of `alerta_tipo`, `alerta_origem`, `atualizacao_base_id`, `paciente_id` present | `rejeitados`, one item per event; `evento_id` is `null` when the event has no usable string `evento_id` |
+| `null` in `evento_id`, `evento` or `alerta_id`, or a `null` array item (JS `undefined` in an array) | `rejeitados`, `mensagem: valor nulo não permitido` |
+| `\u0000` or an unpaired surrogate in any key or string, at any depth | `rejeitados`, `campo` = path to the value (e.g. `extra.lista.1`), `mensagem: texto com caractere não permitido …` |
+| `NaN`, `Infinity` or an overflowing number such as `1e400`, at any depth | `rejeitados`, `mensagem: número não permitido …` |
+| `null` in any other field | accepted and stored as `null` |
 | Unknown `alerta_id` | accepted (spec 8.6) |
+
+Values the JSON parser accepts but PostgreSQL JSONB cannot store (`\u0000`,
+unpaired surrogates, `NaN`/`Infinity`) are rejected per event, so they never
+turn a valid batch into a 500.
+
+As a safety net for any value validation does not foresee, a `DataError` from
+PostgreSQL on the batch insert is not a 500: the batch is retried event by event,
+each in a savepoint, inside the same transaction. Events PostgreSQL refuses come
+back in `rejeitados` with `campo: eventos[N]` and `mensagem: evento contém valor
+que o banco de dados não aceita`, and are logged as `telemetria_evento_nao_armazenavel`
+with the driver error class only (never the values). The rest of the batch is
+stored. Other database errors (connection, timeout) still return 500, so the
+client resends the batch.
 
 Errors always carry `detail` as a single string, in Portuguese:
 
@@ -164,6 +183,9 @@ Errors always carry `detail` as a single string, in Portuguese:
 |---|---|---|
 | `{"eventos": []}` | 422 | `Lote vazio: informe ao menos 1 evento` |
 | `eventos` missing / not a list / malformed JSON | 422 | e.g. `eventos: campo obrigatório ausente`, `JSON malformado` |
+| Body `null` or empty | 422 | `corpo da requisição ausente` |
+| `{"eventos": null}` | 422 | `eventos: valor nulo não permitido` |
+| Invalid UTF-8, nesting deeper than the parser allows, single quotes, `undefined` | 422 | `JSON malformado` |
 | More than `TELEMETRY_MAX_BATCH_SIZE` events | 413 | `Lote acima do limite: envie no máximo 200 eventos por chamada` |
 | Body larger than `MAX_REQUEST_BODY_BYTES` | 413 | `Corpo da requisição acima do limite: envie no máximo 1048576 bytes por chamada` |
 | Rate limit exceeded | 429 | `Limite de requisições excedido: tente novamente em N segundos` (+ `Retry-After`) |
@@ -195,28 +217,6 @@ Go-live order for the rate limit (spec 8.6 and 10.2):
 2. Confirm `FORWARDED_ALLOW_IPS` resolves real client IPs in that environment.
 3. Set `RATE_LIMIT_ENABLED=true`.
 4. Only then start the historical backfill.
-
-### What Pitang needs to change
-
-1. **Split by size, not only by count.** A call must have at most 200 events **and** at
-   most 1,048,576 bytes of body. A 413 means one of the two was exceeded; `detail` says
-   which. Split the batch (e.g. in half) and resend the halves with the same `evento_id`
-   values. If a single event alone exceeds the byte limit, it is a client bug: fix it,
-   do not retry.
-2. **Send the body as plain JSON.** Compression (`Content-Encoding: gzip`) is not
-   supported; the HMAC is computed over the bytes exactly as sent.
-3. **Handle 429.** Wait the seconds in `Retry-After`, then resend the same batch with
-   the same `evento_id` values. Once the backend IP is exempt this should not happen
-   for telemetry.
-4. **Send the backend's outbound IP** to Vital before the backfill (step 1 above).
-5. **Read `detail` as a string** for every 4xx error.
-6. **Treat `rejeitados` as final for that event** until it is fixed: resend only the
-   corrected events. A rejection with `campo: alerta_id` and `mensagem:
-   alerta_encerrado já registrado para este alerta_id` means the alert was already
-   closed; do not resend it.
-7. **Never reuse an `evento_id` for different content.** It is ignored and logged.
-8. **Do not send** `alerta_tipo`, `alerta_origem`, `atualizacao_base_id` or
-   `paciente_id`; events carrying them are rejected (spec CE-11).
 
 ## Tests
 

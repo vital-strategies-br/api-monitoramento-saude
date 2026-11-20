@@ -11,7 +11,7 @@ ALERT_CLOSED_EVENT = "alerta_encerrado"
 
 
 class TelemetryEvent(AuditBase):
-    """One dashboard event sent by the plugin backend, stored as received."""
+    """One plugin event (display, guidance step, action or feedback) sent by the plugin backend, stored as received."""
 
     __tablename__ = "telemetria_evento"
     __table_args__ = (

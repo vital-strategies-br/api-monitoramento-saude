@@ -6,7 +6,7 @@ from pydantic_core import PydanticCustomError
 
 from app.core import messages
 from app.core.config import settings
-from app.utils.openapi import json_examples
+from app.utils.validation import find_unstorable_value
 
 # Event names of contract version 1 (spec 8.3).
 EventName = Literal[
@@ -78,24 +78,56 @@ class TelemetryEventIn(BaseModel):
     def reject_forbidden_fields(cls, data: Any) -> Any:
         forbidden = sorted(FORBIDDEN_FIELDS & data.keys()) if isinstance(data, dict) else []
         if forbidden:
-            raise PydanticCustomError("campo_proibido", messages.FORBIDDEN_FIELD, {"campo": forbidden[0]})
+            raise PydanticCustomError(messages.FORBIDDEN_FIELD_ERROR, messages.FORBIDDEN_FIELD, {"campo": forbidden[0]})
+        return data
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_unstorable_values(cls, data: Any) -> Any:
+        # NUL, lone surrogates and NaN/Infinity parse fine but break JSONB storage,
+        # logging or the UTF-8 response: reject this event instead of failing the batch.
+        problem = find_unstorable_value(data) if isinstance(data, dict) else None
+        if problem is not None:
+            path, message = problem
+            raise PydanticCustomError(messages.UNSTORABLE_VALUE_ERROR, message, {"campo": path})
         return data
 
 
+_REJECTION_LIST = "\n".join(f"- `{m}`" for m in messages.REJECTION_MESSAGES)
+
+
 class RejectedEvent(BaseModel):
+    """One event that was not accepted. Fix it and resend only this event."""
+
     evento_id: str | None = Field(
         ...,
-        description="`evento_id` do evento rejeitado; nulo quando o evento não o informa.",
+        description=(
+            "`evento_id` do evento rejeitado, como enviado. Nulo quando o evento não tem "
+            "`evento_id` em texto (ausente, nulo, outro tipo ou texto não representável)."
+        ),
         examples=["7a1e5c30-9b2d-4f8a-8c64-3d0e1f2a4b55"],
     )
-    campo: str = Field(..., description="Campo inválido.", examples=["alerta_id"])
+    campo: str = Field(
+        ...,
+        description=(
+            "Caminho do valor inválido dentro do evento: o nome do campo (`alerta_id`), "
+            "um caminho com pontos para valores aninhados (`extra.lista.1`), ou "
+            "`eventos[N]` (posição no lote, a partir de 0) quando o problema é o evento "
+            "inteiro ou o nome de um campo."
+        ),
+        examples=["alerta_id", "extra.lista.1", "eventos[3]"],
+    )
     mensagem: str = Field(
-        ..., description="Motivo da rejeição.", examples=["valor não é um UUID válido"],
+        ...,
+        description="Motivo da rejeição, sempre um destes textos:\n" + _REJECTION_LIST,
+        examples=[messages.VALIDATION_ERRORS["uuid_parsing"]],
     )
 
 
 class TelemetryBatchResponse(BaseModel):
-    aceitos: int = Field(..., ge=0, description="Quantidade de eventos aceitos.", examples=[1])
+    """Receipt for a batch: `aceitos + duplicados + len(rejeitados)` equals the events sent."""
+
+    aceitos: int = Field(..., ge=0, description="Quantidade de eventos armazenados.", examples=[1])
     duplicados: int = Field(
         ..., ge=0,
         description="Quantidade de eventos ignorados por `evento_id` já recebido (vale o primeiro).",
@@ -103,27 +135,5 @@ class TelemetryBatchResponse(BaseModel):
     )
     rejeitados: list[RejectedEvent] = Field(
         ...,
-        description=(
-            "Eventos inválidos, não aceitos, um item por evento. Reenviar somente estes, corrigidos."
-        ),
+        description="Eventos inválidos, não aceitos, um item por evento. Reenviar somente estes, corrigidos.",
     )
-
-
-RESPONSE_200_CONTENT = json_examples(
-    lote_aceito=(
-        "Lote aceito",
-        {"aceitos": 1, "duplicados": 0, "rejeitados": []},
-    ),
-    lote_com_rejeicao=(
-        "Lote com duplicado e rejeitado",
-        {
-            "aceitos": 2,
-            "duplicados": 1,
-            "rejeitados": [{
-                "evento_id": "7a1e5c30-9b2d-4f8a-8c64-3d0e1f2a4b55",
-                "campo": "alerta_id",
-                "mensagem": messages.VALIDATION_ERRORS["uuid_parsing"],
-            }],
-        },
-    ),
-)
