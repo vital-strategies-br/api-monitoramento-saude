@@ -3,10 +3,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.auth import ApiAuthMiddleware
+from app.core.body_limit import BodySizeLimitMiddleware
 from app.core.config import settings
 from app.core.errors import internal_exception_handler
 from app.core.logging import configure_logging, RequestLoggingMiddleware
+from app.core.rate_limit import RateLimitMiddleware
 from app.db.session import db_ping
+from app.utils.openapi import keep_nulls_in_examples
 
 configure_logging()
 
@@ -24,6 +27,10 @@ app = FastAPI(
             "description": "Endpoints para verificar se existe relação entre identificadores e um tipo de evento.",
         },
         {
+            "name": "telemetria",
+            "description": "Recebimento dos eventos do plugin de alertas: exibição, orientação e feedback dos profissionais.",
+        },
+        {
             "name": "health",
             "description": "Verificações de disponibilidade da API e do banco de dados.",
         },
@@ -39,10 +46,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# The last middleware added runs first. Request order:
+# logging -> rate limit -> body size limit -> auth (reads the whole body for HMAC) -> CORS -> route.
 app.add_middleware(ApiAuthMiddleware)
+app.add_middleware(BodySizeLimitMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(api_router, prefix="/api/v1")
 app.add_exception_handler(Exception, internal_exception_handler)
+keep_nulls_in_examples(app)
 
 
 @app.get("/health", tags=["health"])

@@ -5,8 +5,13 @@ API for querying relations between identifiers and health events.
 ## Run with Docker Compose
 
 ```bash
+cp .env.example .env   # then replace every <...> placeholder
 docker compose up --build
 ```
+
+`.env.example` lists every setting with the production values from the
+specification; lines marked `dev:` give the training server value. Keep real
+keys and secrets only in `.env`, which is gitignored.
 
 - API: http://localhost:8000
 - Swagger (docs): http://localhost:8000/docs
@@ -126,6 +131,92 @@ and the exact identification details used at the time. Records contain sensitive
 identifiers and require the same database access controls as the identifier table.
 An audit record means the API prepared a positive response; network delivery and
 frontend display require a separate client acknowledgement mechanism.
+
+## Telemetry events
+
+`POST /api/v1/telemetria/eventos` receives the alert plugin's events, sent by the
+plugin backend (Pitang): alert displays, guidance steps, action buttons and the
+feedback professionals record about each alert (section 8 of the Alert Plugin Final
+Specification).
+It uses the same `X-API-Key` + HMAC authentication as the query API. Apply Flyway
+migration V12 before running this version.
+
+Events are stored in `monitoramento.telemetria_evento`: the full event as received in
+`payload`, plus `evento_id`, `evento` and `alerta_id` columns that enforce the contract,
+and the `internal_id` / `created_by` / `created_on` / `updated_by` / `updated_on` audit
+columns. `created_by` is the SHA-256 of the caller's API key, never the key itself.
+
+### Responses
+
+Every event in a batch lands in exactly one bucket, so
+`aceitos + duplicados + len(rejeitados)` always equals the number of events sent.
+
+| Situation | Result |
+|---|---|
+| Valid event, new `evento_id` | stored, counted in `aceitos` |
+| `evento_id` already received (same call or earlier) | ignored, first one wins, counted in `duplicados` |
+| Same `evento_id` with different content | as above, plus a `telemetria_duplicado_divergente` warning log (field names only) |
+| Second `alerta_encerrado` for the same `alerta_id` | `rejeitados`, `campo: alerta_id` |
+| Not an object, missing/invalid `evento_id` or `alerta_id`, unknown `evento`, or one of `alerta_tipo`, `alerta_origem`, `atualizacao_base_id`, `paciente_id` present | `rejeitados`, one item per event; `evento_id` is `null` when the event has no usable string `evento_id` |
+| `null` in `evento_id`, `evento` or `alerta_id`, or a `null` array item (JS `undefined` in an array) | `rejeitados`, `mensagem: valor nulo não permitido` |
+| `\u0000` or an unpaired surrogate in any key or string, at any depth | `rejeitados`, `campo` = path to the value (e.g. `extra.lista.1`), `mensagem: texto com caractere não permitido …` |
+| `NaN`, `Infinity` or an overflowing number such as `1e400`, at any depth | `rejeitados`, `mensagem: número não permitido …` |
+| `null` in any other field | accepted and stored as `null` |
+| Unknown `alerta_id` | accepted (spec 8.6) |
+
+Values the JSON parser accepts but PostgreSQL JSONB cannot store (`\u0000`,
+unpaired surrogates, `NaN`/`Infinity`) are rejected per event, so they never
+turn a valid batch into a 500.
+
+As a safety net for any value validation does not foresee, a `DataError` from
+PostgreSQL on the batch insert is not a 500: the batch is retried event by event,
+each in a savepoint, inside the same transaction. Events PostgreSQL refuses come
+back in `rejeitados` with `campo: eventos[N]` and `mensagem: evento contém valor
+que o banco de dados não aceita`, and are logged as `telemetria_evento_nao_armazenavel`
+with the driver error class only (never the values). The rest of the batch is
+stored. Other database errors (connection, timeout) still return 500, so the
+client resends the batch.
+
+Errors always carry `detail` as a single string, in Portuguese:
+
+| Call | Status | `detail` |
+|---|---|---|
+| `{"eventos": []}` | 422 | `Lote vazio: informe ao menos 1 evento` |
+| `eventos` missing / not a list / malformed JSON | 422 | e.g. `eventos: campo obrigatório ausente`, `JSON malformado` |
+| Body `null` or empty | 422 | `corpo da requisição ausente` |
+| `{"eventos": null}` | 422 | `eventos: valor nulo não permitido` |
+| Invalid UTF-8, nesting deeper than the parser allows, single quotes, `undefined` | 422 | `JSON malformado` |
+| More than `TELEMETRY_MAX_BATCH_SIZE` events | 413 | `Lote acima do limite: envie no máximo 200 eventos por chamada` |
+| Body larger than `MAX_REQUEST_BODY_BYTES` | 413 | `Corpo da requisição acima do limite: envie no máximo 1048576 bytes por chamada` |
+| Rate limit exceeded | 429 | `Limite de requisições excedido: tente novamente em N segundos` (+ `Retry-After`) |
+| Database failure | 500 | `Erro interno` (nothing from the batch is stored) |
+
+### Limits and configuration
+
+All limits are environment variables (defaults in `app/core/config.py` and `docker-compose.yml`):
+
+| Variable | Default | Applies to |
+|---|---|---|
+| `TELEMETRY_MAX_BATCH_SIZE` | `200` | events per telemetry call (spec value; change only together with Pitang) |
+| `MAX_REQUEST_BODY_BYTES` | `1048576` (1 MiB) | body of every authenticated route, checked before auth reads it |
+| `RATE_LIMIT_ENABLED` | `false` | turns the per-IP rate limit on |
+| `RATE_LIMIT_REQUESTS` | `120` | requests per window per client IP |
+| `RATE_LIMIT_WINDOW_SECONDS` | `60` | window length |
+| `RATE_LIMIT_EXEMPT_IPS` | empty | comma-separated IPs never limited (the Pitang backend outbound IP) |
+| `FORWARDED_ALLOW_IPS` | `127.0.0.1` | proxies trusted for `X-Forwarded-For` (read by gunicorn) |
+
+The rate limit covers every `/api/v1` route, including the query API called by the
+plugin from the health units. Counters live in each worker's memory, so the effective
+ceiling is `RATE_LIMIT_REQUESTS x GUNICORN_WORKERS`. Behind a reverse proxy, list the
+proxy in `FORWARDED_ALLOW_IPS`, otherwise every client appears as the proxy's IP and
+shares one counter. A proxy in front of the API also needs its own body limit at least
+as large as `MAX_REQUEST_BODY_BYTES` (nginx defaults to 1 MiB with `client_max_body_size`).
+
+Go-live order for the rate limit (spec 8.6 and 10.2):
+1. Pitang sends the backend's outbound IP; set it in `RATE_LIMIT_EXEMPT_IPS`.
+2. Confirm `FORWARDED_ALLOW_IPS` resolves real client IPs in that environment.
+3. Set `RATE_LIMIT_ENABLED=true`.
+4. Only then start the historical backfill.
 
 ## Tests
 
